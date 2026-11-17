@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- EPZ, WalkPlay, CB/TTGK, Conexant, KTMicro, FiiO, JadeAudio, Snowsky Vendor IDs -->
+    <usb-device vendor-id="13058" /> <!-- 0x3302 Comtrue/TTGK/EPZ/WalkPlay -->
+    <usb-device vendor-id="10610" /> <!-- 0x2972 FiiO / JadeAudio / Snowsky -->
+    <usb-device vendor-id="23233" /> <!-- 0x5AC1 EPZ G10 Pro / TP13 / H10 -->
+    <usb-device vendor-id="4132" />  <!-- 0x1024 GM55 -->
+    <usb-device vendor-id="12722" /> <!-- 0x31B2 JadeAudio / KTMicro -->
+    <usb-device vendor-id="2578" />  <!-- 0x0A12 Qualcomm / BT11 bridge -->
+    <usb-device vendor-id="1890" />  <!-- 0x0762 -->
+    <usb-device vendor-id="13784" /> <!-- 0x35D8 -->
+    <usb-device vendor-id="12230" /> <!-- 0x2FC6 -->
+    <usb-device vendor-id="260" />   <!-- 0x0104 -->
+    <usb-device vendor-id="46157" /> <!-- 0xB44D -->
+    <usb-device vendor-id="1633" />  <!-- 0x0661 -->
+    <usb-device vendor-id="1638" />  <!-- 0x0666 -->
+    <usb-device vendor-id="3468" />  <!-- 0x0D8C C-Media -->
+    <usb-device vendor-id="1635" />  <!-- 0x0663 -->
+    <usb-device vendor-id="285" />   <!-- 0x011D -->
+    <usb-device vendor-id="2313" />  <!-- 0x0909 -->
+    <usb-device vendor-id="13502" /> <!-- 0x34BE -->
+    <usb-device vendor-id="13991" /> <!-- 0x36A7 -->
+    <usb-device vendor-id="14139" /> <!-- 0x373B -->
+</resources>

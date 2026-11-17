@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="launcher_black">#000000</color>
+    <color name="obsidian_bg">#0E1013</color>
+    <color name="obsidian_surface">#16191E</color>
+    <color name="accent_teal">#68D8C8</color>
+</resources>
