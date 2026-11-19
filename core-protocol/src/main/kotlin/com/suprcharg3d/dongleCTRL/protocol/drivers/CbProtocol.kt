@@ -30,53 +30,57 @@ class CbProtocol(
     override val displayName: String =
         if (isSurround3dFamily) "CB1300D Surround (0x4B)" else "CB / TTGK DSP (0x4B)"
 
-    override fun buildCapabilities(profile: DacProfile): DacCapabilities = DacCapabilities(
-        maxBands = profile.bandCount.coerceIn(1, 15),
-        minGainDb = profile.minGainDb,
-        maxGainDb = profile.maxGainDb,
-        minQ = 0.25,
-        maxQ = 16.0,
-        supportedFilters = listOf(
-            FilterType.PEAK,
-            FilterType.LOW_SHELF,
-            FilterType.HIGH_SHELF,
-            FilterType.LOW_PASS,
-            FilterType.HIGH_PASS
-        ),
-        sampleRate = profile.sampleRate,
-        hasEqSwitch = false,
-        hasGlobalGain = true,
-        globalGainRange = -12.0..12.0,
-        hasDacFilter = profile.supportsDacFilter || true,
-        dacFilterOptions = listOf(
-            NamedOption(1, "FAST-LL: Steep-Drop-Low-Latency Filter"),
-            NamedOption(2, "FAST-PC: Steep Drop-Phase Compensation Filter"),
-            NamedOption(3, "SLOW-LL: Slow descent-Low Latency Filter"),
-            NamedOption(4, "SLOW-PC: Slow Decay-Phase Compensation Filter"),
-            NamedOption(5, "NON OS: Non-Oversampling Filter")
-        ),
-        hasOutputMode = true,
-        outputModeOptions = listOf(
-            NamedOption(0, "Class AB"),
-            NamedOption(1, "Class H")
-        ),
-        hasWorkMode = true,
-        workModeOptions = listOf(
-            NamedOption(0, "Low Gain"),
-            NamedOption(1, "High Gain")
-        ),
-        hasVolume = false,
-        hasChannelBalance = true,
-        hasMicGain = profile.supportsMic || true,
-        micGainRange = -15..15,
-        hasMicMonitor = false,
-        hasMicEnc = profile.supportsMic || true,
-        hasSurround3d = isSurround3dFamily || profile.supportsSurround3d,
-        // CB DACs store only a single active EQ bank in hardware RAM/Flash (no hardware preset slots);
-        // pkt[36] is just an app-side eqTag metadata byte. Keep presets empty so the UI hides fake slots.
-        supportsRamRefresh = true,
-        supportsFlashSave = true
-    )
+    override fun buildCapabilities(profile: DacProfile): DacCapabilities {
+        val supportsStageControls = !isSurround3dFamily &&
+            (profile.supportsDacFilter || profile.schemeNo in setOf("11", "16", "18"))
+        return DacCapabilities(
+            maxBands = profile.bandCount.coerceIn(1, 15),
+            minGainDb = profile.minGainDb,
+            maxGainDb = profile.maxGainDb,
+            minQ = 0.25,
+            maxQ = 16.0,
+            supportedFilters = listOf(
+                FilterType.PEAK,
+                FilterType.LOW_SHELF,
+                FilterType.HIGH_SHELF,
+                FilterType.LOW_PASS,
+                FilterType.HIGH_PASS
+            ),
+            sampleRate = profile.sampleRate,
+            hasEqSwitch = false,
+            hasGlobalGain = true,
+            globalGainRange = -12.0..12.0,
+            hasDacFilter = supportsStageControls,
+            dacFilterOptions = listOf(
+                NamedOption(1, "FAST-LL: Steep-Drop-Low-Latency Filter"),
+                NamedOption(2, "FAST-PC: Steep Drop-Phase Compensation Filter"),
+                NamedOption(3, "SLOW-LL: Slow descent-Low Latency Filter"),
+                NamedOption(4, "SLOW-PC: Slow Decay-Phase Compensation Filter"),
+                NamedOption(5, "NON OS: Non-Oversampling Filter")
+            ),
+            hasOutputMode = supportsStageControls,
+            outputModeOptions = listOf(
+                NamedOption(0, "Class AB"),
+                NamedOption(1, "Class H")
+            ),
+            hasWorkMode = supportsStageControls,
+            workModeOptions = listOf(
+                NamedOption(0, "Low Gain"),
+                NamedOption(1, "High Gain")
+            ),
+            hasVolume = false,
+            hasChannelBalance = true,
+            hasMicGain = profile.supportsMic,
+            micGainRange = -15..15,
+            hasMicMonitor = false,
+            hasMicEnc = profile.supportsMic,
+            hasSurround3d = isSurround3dFamily || profile.supportsSurround3d,
+            // CB DACs store only a single active EQ bank in hardware RAM/Flash (no hardware preset slots);
+            // pkt[36] is just an app-side eqTag metadata byte. Keep presets empty so the UI hides fake slots.
+            supportsRamRefresh = true,
+            supportsFlashSave = true
+        )
+    }
 
     override suspend fun readDeviceState(transport: DacTransport, profile: DacProfile): DacDeviceState {
         transport.drainInput()

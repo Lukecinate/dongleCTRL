@@ -86,7 +86,9 @@ data class DacControlDescriptor(
     val options: List<NamedOption> = emptyList(),
     val sliders: List<DacSliderField> = emptyList(),
     val isReadable: Boolean = true,
-    val isWritable: Boolean = true
+    val isWritable: Boolean = true,
+    val allowLimit: Boolean = false,
+    val allowMaxValueChange: Boolean = false
 )
 
 data class DacControlValue(

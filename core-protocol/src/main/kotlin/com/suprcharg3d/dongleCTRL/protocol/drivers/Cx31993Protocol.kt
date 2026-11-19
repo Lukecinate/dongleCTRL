@@ -71,6 +71,11 @@ class Cx31993Protocol : DacProtocol {
         return transport.send(pkt)
     }
 
+    override suspend fun resetEq(transport: DacTransport, profile: DacProfile): Boolean {
+        val count = profile.bandCount.coerceIn(1, 9)
+        return writeAllEqBands(transport, profile, DefaultBands.flatBands(count), 0.0, 0)
+    }
+
     internal fun buildBandPacket(band: EqBand, sampleRate: Int = 48_000, op: Int = OP_SET_COEFFS): ByteArray {
         val coeffs = BiquadCalculator.compute(band, sampleRate)
         val q = BiquadCalculator.quantizeCx31993(coeffs)

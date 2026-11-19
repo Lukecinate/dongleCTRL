@@ -24,6 +24,15 @@ class Cb1100AuProtocol : DacProtocol {
     override val family: ProtocolFamily = ProtocolFamily.CB1100AU
     override val displayName: String = "CB1100AU DSP (0xCB)"
 
+    @Volatile
+    private var cachedBands: List<EqBand> = emptyList()
+
+    @Volatile
+    private var cachedGlobalGainDb: Double = 0.0
+
+    @Volatile
+    private var lastPresetId: Int = 0
+
     override fun buildCapabilities(profile: DacProfile): DacCapabilities = DacCapabilities(
         maxBands = profile.bandCount.coerceIn(1, 10),
         minGainDb = -12.0,
@@ -39,8 +48,13 @@ class Cb1100AuProtocol : DacProtocol {
     )
 
     override suspend fun readDeviceState(transport: DacTransport, profile: DacProfile): DacDeviceState {
+        val count = profile.bandCount.coerceIn(1, 10)
+        val initial = if (cachedBands.size == count) cachedBands else DefaultBands.flatBands(count).also {
+            cachedBands = it
+        }
         return DacDeviceState(
-            bands = DefaultBands.flatBands(profile.bandCount),
+            globalGainDb = cachedGlobalGainDb,
+            bands = initial,
             diagnosticNote = "CB1100AU write-ready (0xCB 48kHz Q5.27)"
         )
     }
@@ -51,7 +65,14 @@ class Cb1100AuProtocol : DacProtocol {
         band: EqBand,
         globalGainDb: Double,
         presetId: Int
-    ): Boolean = writeAllEqBands(transport, profile, listOf(band), globalGainDb, presetId)
+    ): Boolean {
+        val count = profile.bandCount.coerceIn(1, 10)
+        val base = if (cachedBands.size == count) cachedBands else DefaultBands.flatBands(count)
+        val merged = base.mapIndexed { idx, existing ->
+            if (idx == band.index) band else existing
+        }
+        return writeAllEqBands(transport, profile, merged, globalGainDb, presetId)
+    }
 
     override suspend fun writeAllEqBands(
         transport: DacTransport,
@@ -60,12 +81,31 @@ class Cb1100AuProtocol : DacProtocol {
         globalGainDb: Double,
         presetId: Int
     ): Boolean {
-        val chunks = buildEqPackets(bands, globalGainDb)
+        val count = profile.bandCount.coerceIn(1, 10)
+        val normalized = if (bands.size >= count) bands.take(count) else {
+            val flat = DefaultBands.flatBands(count)
+            List(count) { idx -> bands.getOrNull(idx) ?: flat[idx] }
+        }
+        cachedBands = normalized
+        cachedGlobalGainDb = globalGainDb
+        lastPresetId = presetId
+        val chunks = buildEqPackets(normalized, globalGainDb)
         for (pkt in chunks) {
             if (!transport.send(pkt)) return false
             delay(8)
         }
         return sendApplyControl(transport, presetId, saveFlash = false)
+    }
+
+    override suspend fun setGlobalGain(transport: DacTransport, profile: DacProfile, gainDb: Double): Boolean {
+        val count = profile.bandCount.coerceIn(1, 10)
+        val bands = if (cachedBands.size == count) cachedBands else DefaultBands.flatBands(count)
+        return writeAllEqBands(transport, profile, bands, gainDb, lastPresetId)
+    }
+
+    override suspend fun resetEq(transport: DacTransport, profile: DacProfile): Boolean {
+        val count = profile.bandCount.coerceIn(1, 10)
+        return writeAllEqBands(transport, profile, DefaultBands.flatBands(count), 0.0, lastPresetId)
     }
 
     override suspend fun saveToFlash(transport: DacTransport, profile: DacProfile, presetId: Int): Boolean =

@@ -48,6 +48,8 @@ class FiioHidProtocol(
     private var lastKa1RegEa: Int = 0
     @Volatile
     private var ka13Seq: Int = 1
+    @Volatile
+    private var lastKnownStepMax: Int = 60
 
     private fun effectiveUsbPeqSchema(schema: FiioDeviceSchema): FiioDeviceSchema {
         if (!schema.usbOnlyPeq) return schema
@@ -381,7 +383,26 @@ class FiioHidProtocol(
             } ?: 1
         } else 0
 
-        val extraValues = readExtraControlsHid(transport, schema, rid)
+        val extraValuesRaw = readExtraControlsHid(transport, schema, rid)
+        val (extraValues, computedVolMax) = if (schema != null) {
+            FiioSchemaControlsHelper.recomputeVolumeConstraints(schema, extraValuesRaw, volMax)
+        } else {
+            extraValuesRaw to volMax
+        }
+        val finalVolMax = if (schema != null && schema.findControl("vol_control", "vol_limit") != null) {
+            computedVolMax
+        } else {
+            volMax
+        }
+        lastKnownStepMax = if (schema != null) {
+            FiioSchemaControlsHelper.resolveStepMax(
+                schema,
+                extraValues["vol_control"]?.intValue,
+                volMax
+            )
+        } else {
+            volMax
+        }
 
         val devName = if (schema != null && !schema.usbOnlyPeq && schema.editNameGetCmd > 0) {
             usbRequest(transport, schema, rid, schema.editNameGetCmd)?.let { p ->
@@ -409,8 +430,8 @@ class FiioHidProtocol(
             dacFilterIndex = filterIdx,
             outputModeIndex = ampModeIdx,
             workModeIndex = gainModeIdx,
-            volume = vol,
-            maxVolume = volMax,
+            volume = vol.coerceIn(0, finalVolMax),
+            maxVolume = finalVolMax,
             channelBalance = balance.coerceIn(-caps.channelBalanceMax, caps.channelBalanceMax),
             micGainDb = micGain,
             micSwitchEnabled = micSwitch,
@@ -862,7 +883,15 @@ class FiioHidProtocol(
         val ctrl = schema.controls.firstOrNull { it.key == key } ?: return false
         if (ctrl.setCmd <= 0) return false
         val rid = resolveReportId(transport, profile)
-        val payload = FiioSchemaControlsHelper.encodePayload(ctrl, value, presetSlotId = lastKnownPresetId ?: 0)
+        val effectiveValue = if (ctrl.allowMaxValueChange && value.dynamicMax == null) {
+            value.copy(dynamicMax = lastKnownStepMax.coerceAtLeast(ctrl.max ?: 60))
+        } else {
+            value
+        }
+        if (key == "vol_control") {
+            lastKnownStepMax = FiioSchemaControlsHelper.resolveStepMax(schema, effectiveValue.intValue, lastKnownStepMax)
+        }
+        val payload = FiioSchemaControlsHelper.encodePayload(ctrl, effectiveValue, presetSlotId = lastKnownPresetId ?: 0, isUsb = true)
         val ok = usbSend(transport, schema, rid, ctrl.setCmd, payload)
         if (ok && schema.commandBuilderType == 61449 && ctrl.setCmd == 13) {
             lastKa5VolCtrl = payload.firstOrNull()?.toInt()?.and(0xFF) ?: 0
@@ -1004,7 +1033,25 @@ class FiioHidProtocol(
             }
             val refreshedExtras = readExtraControlsHid(transport, schema, rid)
             if (refreshedExtras.isNotEmpty()) {
-                updated = updated.copy(extraControlValues = updated.extraControlValues + refreshedExtras)
+                val (mergedExtras, effMax) = FiioSchemaControlsHelper.recomputeVolumeConstraints(
+                    schema,
+                    updated.extraControlValues + refreshedExtras,
+                    lastKnownStepMax
+                )
+                lastKnownStepMax = FiioSchemaControlsHelper.resolveStepMax(
+                    schema,
+                    mergedExtras["vol_control"]?.intValue,
+                    lastKnownStepMax
+                )
+                updated = if (schema.findControl("vol_control", "vol_limit") != null) {
+                    updated.copy(
+                        maxVolume = effMax,
+                        volume = updated.volume.coerceIn(0, effMax),
+                        extraControlValues = mergedExtras
+                    )
+                } else {
+                    updated.copy(extraControlValues = mergedExtras)
+                }
             }
         }
         return updated

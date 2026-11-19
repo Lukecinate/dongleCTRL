@@ -39,8 +39,7 @@ class Kt1213Protocol : DacProtocol {
             FilterType.HIGH_PASS
         ),
         sampleRate = 48_000,
-        hasGlobalGain = true,
-        globalGainRange = -12.0..12.0,
+        hasGlobalGain = false,
         presets = listOf(
             NamedOption(0, "Preset 1"),
             NamedOption(1, "Preset 2"),
@@ -107,6 +106,11 @@ class Kt1213Protocol : DacProtocol {
     override suspend fun selectPreset(transport: DacTransport, profile: DacProfile, presetId: Int): Boolean {
         val pkt = BytePack.fixed64(0x4B, 5, 1, 0, presetId and 0xFF, 255)
         return transport.send(pkt)
+    }
+
+    override suspend fun resetEq(transport: DacTransport, profile: DacProfile): Boolean {
+        val count = profile.bandCount.coerceIn(1, 15)
+        return writeAllEqBands(transport, profile, DefaultBands.flatBands(count), 0.0, 0)
     }
 
     internal fun buildExtendedWriteFrame(moduleId: Int, offset: Int, payload: ByteArray): ByteArray {

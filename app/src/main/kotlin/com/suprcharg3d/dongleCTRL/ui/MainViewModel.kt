@@ -732,7 +732,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun setGlobalGain(gainDb: Double) {
         updateHardwareState(
             transform = { it.copy(globalGainDb = gainDb) },
-            markFlashDirty = true
+            markFlashDirty = true,
+            debounceKey = "globalGain"
         ) { tx, profile, driver ->
             driver.setGlobalGain(tx, profile, gainDb)
         }
@@ -910,26 +911,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 updatedMap[key] = value
                 var nextMaxVol = cur.maxVolume
                 var nextVol = cur.volume
+                val extrasMeta = session.capabilities.extraControls
                 if (key == "vol_control") {
-                    val newStepMax = if (value.intValue == 1) 120 else 60
+                    val optLabel = extrasMeta.firstOrNull { it.key == "vol_control" }
+                        ?.options?.firstOrNull { it.id == value.intValue }?.label
+                    val newStepMax = when {
+                        optLabel?.contains("120") == true -> 120
+                        optLabel?.contains("60") == true -> 60
+                        value.intValue == 1 -> 120
+                        else -> 60
+                    }
+                    extrasMeta.filter { it.allowMaxValueChange }.forEach { meta ->
+                        updatedMap[meta.key]?.let { existing ->
+                            updatedMap[meta.key] = existing.copy(
+                                dynamicMax = newStepMax,
+                                intValue = existing.intValue.coerceIn(meta.min, newStepMax)
+                            )
+                        }
+                    }
                     val lim = updatedMap["vol_limit"]?.intValue?.takeIf { it in 20..newStepMax }
                     nextMaxVol = lim ?: newStepMax
                     nextVol = nextVol.coerceIn(0, nextMaxVol)
-                    updatedMap["vol_limit"]?.let { v ->
-                        updatedMap["vol_limit"] = v.copy(dynamicMax = newStepMax, intValue = v.intValue.coerceIn(20, newStepMax))
-                    }
-                    listOf("vol_call", "vol_tip").forEach { k ->
-                        updatedMap[k]?.let { v ->
-                            updatedMap[k] = v.copy(dynamicMax = nextMaxVol, intValue = v.intValue.coerceIn(0, nextMaxVol))
+                    extrasMeta.filter { it.allowLimit }.forEach { meta ->
+                        updatedMap[meta.key]?.let { existing ->
+                            updatedMap[meta.key] = existing.copy(
+                                dynamicMax = nextMaxVol,
+                                intValue = existing.intValue.coerceIn(meta.min, nextMaxVol)
+                            )
                         }
                     }
                 } else if (key == "vol_limit") {
-                    val stepMax = if (updatedMap["vol_control"]?.intValue == 1) 120 else 60
+                    val stepOpt = updatedMap["vol_control"]?.intValue
+                    val optLabel = extrasMeta.firstOrNull { it.key == "vol_control" }
+                        ?.options?.firstOrNull { it.id == stepOpt }?.label
+                    val stepMax = when {
+                        optLabel?.contains("120") == true -> 120
+                        optLabel?.contains("60") == true -> 60
+                        stepOpt == 1 -> 120
+                        else -> session.capabilities.maxVolume.coerceAtLeast(60)
+                    }
                     nextMaxVol = value.intValue.coerceIn(20, stepMax)
                     nextVol = nextVol.coerceIn(0, nextMaxVol)
-                    listOf("vol_call", "vol_tip").forEach { k ->
-                        updatedMap[k]?.let { v ->
-                            updatedMap[k] = v.copy(dynamicMax = nextMaxVol, intValue = v.intValue.coerceIn(0, nextMaxVol))
+                    extrasMeta.filter { it.allowLimit }.forEach { meta ->
+                        updatedMap[meta.key]?.let { existing ->
+                            updatedMap[meta.key] = existing.copy(
+                                dynamicMax = nextMaxVol,
+                                intValue = existing.intValue.coerceIn(meta.min, nextMaxVol)
+                            )
                         }
                     }
                 }
@@ -942,7 +970,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             markFlashDirty = flashDirty,
             debounceKey = debounce
         ) { tx, profile, driver ->
-            driver.setExtraControl(tx, profile, key, value)
+            val ok = driver.setExtraControl(tx, profile, key, value)
+            if (ok && key == "vol_control") {
+                delay(220)
+                val baseState = _uiState.value.activeSession?.state
+                val refreshed = if (baseState != null) {
+                    runCatching { driver.refreshLiveTelemetry(tx, profile, baseState, includeAllControls = true) }.getOrNull()
+                } else null
+                if (refreshed != null) {
+                    _uiState.update { ui ->
+                        val cur = ui.activeSession ?: return@update ui
+                        if (cur.deviceKey != session.deviceKey) return@update ui
+                        ui.copy(activeSession = cur.copy(state = refreshed))
+                    }
+                }
+            }
+            ok
         }
     }
 

@@ -98,8 +98,54 @@ internal object FiioSchemaControlsHelper {
             options = options,
             sliders = def.sliders.map { DacSliderField(it.min, it.max, it.step, it.label) },
             isReadable = def.getCmd > 0,
-            isWritable = def.setCmd > 0
+            isWritable = def.setCmd > 0,
+            allowLimit = def.allowLimit,
+            allowMaxValueChange = def.allowMaxValueChange
         )
+    }
+
+    fun resolveStepMax(schema: FiioDeviceSchema, volControlVal: Int?, fallbackMax: Int = 60): Int {
+        val volCtrlDef = schema.findControl("device_volume", "vol_output", "vol_of_bluetooth", "device_volume_nui")
+        val baseMax = volCtrlDef?.max ?: fallbackMax
+        val stepCtrl = schema.findControl("vol_control") ?: return baseMax
+        if (volControlVal == null) return fallbackMax.coerceAtLeast(baseMax)
+        val opt = stepCtrl.options.firstOrNull { it.id == volControlVal }
+        return when {
+            opt != null && opt.label.contains("120") -> 120
+            opt != null && opt.label.contains("60") -> 60
+            volControlVal == 1 -> 120
+            else -> baseMax
+        }
+    }
+
+    fun recomputeVolumeConstraints(
+        schema: FiioDeviceSchema,
+        extraValues: Map<String, DacControlValue>,
+        stepMaxOverride: Int? = null
+    ): Pair<Map<String, DacControlValue>, Int> {
+        val stepVal = extraValues["vol_control"]?.intValue
+        val stepMax = resolveStepMax(schema, stepVal, stepMaxOverride ?: 60)
+        val out = LinkedHashMap<String, DacControlValue>(extraValues.size)
+        for ((k, v) in extraValues) {
+            out[k] = v
+        }
+        val hasVolControl = schema.findControl("vol_control") != null
+        for (ctrl in schema.controls) {
+            val cur = out[ctrl.key] ?: continue
+            if (ctrl.allowMaxValueChange && hasVolControl) {
+                out[ctrl.key] = cur.copy(dynamicMax = stepMax)
+            }
+        }
+        val activeVolLimit = out["vol_limit"]?.intValue?.takeIf { it in 1..stepMax }
+        if (activeVolLimit != null) {
+            for (ctrl in schema.controls) {
+                if (ctrl.allowLimit) {
+                    val cur = out[ctrl.key] ?: continue
+                    out[ctrl.key] = cur.copy(dynamicMax = activeVolLimit)
+                }
+            }
+        }
+        return out to (activeVolLimit?.takeIf { it >= 20 } ?: stepMax)
     }
 
     fun isPrimaryControl(key: String): Boolean {
@@ -232,7 +278,7 @@ internal object FiioSchemaControlsHelper {
             }
             3, 10 -> {
                 val minVal = def.min ?: 0
-                val maxVal = def.max ?: 100
+                val maxVal = value.dynamicMax ?: def.max ?: 100
                 val step = (def.step ?: 1).coerceAtLeast(1)
                 val clamped = value.intValue.coerceIn(minVal, maxVal)
                 val rawByte = when (ruler) {

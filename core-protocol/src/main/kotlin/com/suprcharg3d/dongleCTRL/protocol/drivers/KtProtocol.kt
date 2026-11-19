@@ -46,8 +46,8 @@ class KtProtocol(
         hasGlobalGain = true,
         globalGainRange = -18.0..3.0,
         hasDacFilter = false,
-        hasMicGain = true,
-        micGainRange = -12..12,
+        hasMicGain = !isSixBand,
+        micGainRange = -6..44,
         supportsRamRefresh = true,
         supportsFlashSave = true
     )
@@ -58,6 +58,20 @@ class KtProtocol(
         val presetReg = if (isS19) 22 else 2
         val presetResp = readReg(transport, presetReg)
         val presetId = presetResp?.getOrNull(7)?.toInt()?.and(0xFF) ?: 0
+
+        val gainReg = if (isS19) REG_KT0231H_DAC_GAIN else REG_KT02H20_DAC_PGA
+        val gainResp = readReg(transport, gainReg)
+        val globalGainDb = if (gainResp != null && gainResp.size >= 9) {
+            val raw = BytePack.getI16Le(gainResp, 7)
+            if (isS19) (-raw / 10.0).coerceIn(-18.0, 3.0)
+            else CHIP_DAC_DB.getOrNull(raw.coerceIn(1, CHIP_DAC_DB.lastIndex)) ?: 0.0
+        } else 0.0
+
+        val micGainDb = if (!isS19) {
+            val micResp = readReg(transport, REG_KT02H20_ADC_PGA)
+            val idx = micResp?.getOrNull(7)?.toInt()?.and(0x07)
+            if (idx != null) KT02H20_MIC_PGA_DB.getOrNull(idx) ?: 14 else 14
+        } else 0
 
         val baseReg = if (isS19) 53 else 38
         val bands = (0 until bandCount).map { idx ->
@@ -81,7 +95,12 @@ class KtProtocol(
                 } else fallback
             } else fallback
         }
-        return DacDeviceState(activePresetId = presetId, bands = bands)
+        return DacDeviceState(
+            activePresetId = presetId,
+            globalGainDb = globalGainDb,
+            micGainDb = micGainDb,
+            bands = bands
+        )
     }
 
     override suspend fun writeEqBand(
@@ -113,18 +132,20 @@ class KtProtocol(
         globalGainDb: Double,
         presetId: Int
     ): Boolean {
+        if (!setGlobalGain(transport, profile, globalGainDb)) return false
+        delay(8)
         for (band in bands.take(bandCount)) {
             if (!writeEqBand(transport, profile, band, globalGainDb, presetId)) return false
             delay(8)
         }
         if (!refreshEqRam(transport, profile)) return false
-        val presetReg = if (isSixBand || profile.schemeNo == "19") 22 else 2
+        val presetReg = if (isSixBandProfile(profile)) 22 else 2
         transport.transceive(buildWriteReg(presetReg, presetId, 0), expectedSize = 20, timeoutMs = 450)
         return true
     }
 
     override suspend fun refreshEqRam(transport: DacTransport, profile: DacProfile): Boolean {
-        val refreshReg = if (isSixBand || profile.schemeNo == "19") 52 else 36
+        val refreshReg = if (isSixBandProfile(profile)) 52 else 36
         return transport.transceive(buildWriteReg(refreshReg, 1, 0), expectedSize = 20, timeoutMs = 450) != null
     }
 
@@ -140,11 +161,20 @@ class KtProtocol(
         return transport.transceive(pkt, expectedSize = 20, timeoutMs = 600) != null
     }
 
+    private fun isSixBandProfile(profile: DacProfile): Boolean =
+        profile.schemeNo == "19" || profile.schemeNo == "23" || isSixBand
+
     override suspend fun setGlobalGain(transport: DacTransport, profile: DacProfile, gainDb: Double): Boolean {
-        val isS19 = profile.schemeNo == "19" || isSixBand
-        val reg = if (isS19) 87 else 59
+        val isS19 = isSixBandProfile(profile)
+        val reg = if (isS19) REG_KT0231H_DAC_GAIN else REG_KT02H20_DAC_PGA
         val value = if (isS19) (-gainDb * 10.0).roundToInt() else dbToChipGainIndex(gainDb)
         return transport.transceive(buildWriteReg(reg, value, 0), expectedSize = 20, timeoutMs = 450) != null
+    }
+
+    override suspend fun setMicGain(transport: DacTransport, profile: DacProfile, gainDb: Int): Boolean {
+        if (isSixBandProfile(profile)) return false
+        val idx = dbToMicGainIndex(gainDb)
+        return transport.transceive(buildWriteReg(REG_KT02H20_ADC_PGA, idx, 0), expectedSize = 20, timeoutMs = 450) != null
     }
 
     private suspend fun readReg(transport: DacTransport, reg: Int): ByteArray? {
@@ -175,10 +205,28 @@ class KtProtocol(
         return bestIdx
     }
 
+    private fun dbToMicGainIndex(db: Int): Int {
+        var bestIdx = 0 // 0 dB
+        var bestDiff = Int.MAX_VALUE
+        for (i in KT02H20_MIC_PGA_DB.indices) {
+            val diff = kotlin.math.abs(KT02H20_MIC_PGA_DB[i] - db)
+            if (diff < bestDiff) {
+                bestDiff = diff
+                bestIdx = i
+            }
+        }
+        return bestIdx
+    }
+
     companion object {
         const val REPORT_ID = 0x4B
+        private const val REG_KT02H20_ADC_PGA = 58 // 0x3A (A_ADC)
+        private const val REG_KT02H20_DAC_PGA = 59 // 0x3B (A_DAC)
+        private const val REG_KT0231H_DAC_GAIN = 87
+
         private val CHIP_DAC_DB = doubleArrayOf(
             -99.0, -18.0, -16.5, -15.0, -13.5, -12.0, -10.5, -9.0, -7.5, -6.0, -4.5, -3.0, -1.5, 0.0, 1.5, 3.0
         )
+        private val KT02H20_MIC_PGA_DB = intArrayOf(0, -6, 8, 14, 20, 26, 32, 44)
     }
 }

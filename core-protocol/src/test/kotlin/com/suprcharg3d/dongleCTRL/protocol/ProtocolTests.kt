@@ -125,7 +125,7 @@ class ProtocolTests {
     }
 
     @Test
-    fun `CB1100AU builds valid EQ1# chunked frames with CRC16-CCITT`() {
+    fun `CB1100AU builds valid EQ1# chunked frames preserves full bands on single-band update and supports preamp and reset`() = runTest {
         val driver = Cb1100AuProtocol()
         val bands = DefaultBands.flatBands(10)
         val packets = driver.buildEqPackets(bands, globalGainDb = 0.0)
@@ -136,10 +136,26 @@ class ProtocolTests {
         assertEquals('Q'.code.toByte(), packets[0][3])
         assertEquals('1'.code.toByte(), packets[0][4])
         assertEquals('#'.code.toByte(), packets[0][5])
+
+        val profile = DacProfile("cb1100", "WalkPlay", "USB DSP", 0x3302, 0x8901, protocol = ProtocolFamily.CB1100AU, bandCount = 10)
+        val tx = FakeTransport(descriptor = UsbDeviceDescriptor("cb", 0x3302, 0x8901, "USB DSP"))
+        assertTrue(driver.writeEqBand(tx, profile, EqBand(3, 1000, 4.0, 1.5, FilterType.PEAK), globalGainDb = -2.0, presetId = 1))
+        val firstFrame = tx.sent.first()
+        val totalLen = BytePack.getU16Le(firstFrame, 6)
+        assertEquals(220, totalLen) // 6 + 8 + 4 + 10*20 + 2 (must retain all 10 bands)
+        assertEquals(10, firstFrame[9].toInt() and 0xFF) // bandCount descriptor
+
+        tx.sent.clear()
+        assertTrue(driver.setGlobalGain(tx, profile, -3.5))
+        assertTrue(tx.sent.size >= 8)
+
+        tx.sent.clear()
+        assertTrue(driver.resetEq(tx, profile))
+        assertTrue(tx.sent.size >= 8)
     }
 
     @Test
-    fun `KT02H20 writes 11-byte 0x4B register packets cleanly`() = runTest {
+    fun `KT02H20 writes 11-byte 0x4B register packets mic gain 0x3A and reads state cleanly`() = runTest {
         val driver = KtProtocol(isSixBand = false)
         val profile = DacProfile("kt5", "WalkPlay", "KT5", 0x3302, 0x1001, protocol = ProtocolFamily.KT02H20, schemeNo = "17", bandCount = 5)
         val tx = FakeTransport(descriptor = UsbDeviceDescriptor("kt", 0x3302, 0x1001, "KT5"))
@@ -154,27 +170,73 @@ class ProtocolTests {
         assertEquals('W'.code.toByte(), p0[5])
         assertEquals(40, BytePack.getI16Le(p0, 7)) // 4.0 * 10
         assertEquals(500, BytePack.getU16Le(p0, 9)) // 1000 / 2
+
+        assertTrue(driver.buildCapabilities(profile).hasMicGain)
+        assertFalse(KtProtocol(isSixBand = true).buildCapabilities(profile.copy(protocol = ProtocolFamily.KT0231H, schemeNo = "19")).hasMicGain)
+
+        tx.sent.clear()
+        assertTrue(driver.setMicGain(tx, profile, 20))
+        val micPkt = tx.sent.single()
+        assertEquals(58, micPkt[1].toInt() and 0xFF) // reg 0x3A
+        assertEquals(4, BytePack.getU16Le(micPkt, 7)) // 20 dB = index 4
+
+        val readTx = FakeTransport(replyFactory = { req ->
+            ByteArray(11).also { resp ->
+                resp[0] = 0x4B
+                when (req[1].toInt() and 0xFF) {
+                    58 -> resp[7] = 5 // index 5 -> 26 dB
+                    59 -> resp[7] = 11 // CHIP_DAC_DB[11] -> -3.0 dB
+                    else -> resp[7] = 0
+                }
+            }
+        })
+        val st = driver.readDeviceState(readTx, profile)
+        assertEquals(26, st.micGainDb)
+        assertEquals(-3.0, st.globalGainDb, 0.01)
     }
 
     @Test
-    fun `KT1213 builds valid 0x57 CRC16-IBM frame and CX31993 and GM55 build valid frames`() {
+    fun `KT1213 builds valid 0x57 CRC16-IBM frame CX31993 and GM55 build valid frames and reset cleanly`() = runTest {
         val kt1213 = Kt1213Protocol()
+        val ktProfile = DacProfile("kt15", "EPZ", "G10 Pro", 0x5AC1, 0x2101, protocol = ProtocolFamily.KT1213, schemeNo = "26", bandCount = 15)
+        assertFalse(kt1213.buildCapabilities(ktProfile).hasGlobalGain)
         val f15 = kt1213.buildExtendedWriteFrame(moduleId = 72, offset = 0, payload = ByteArray(10))
         assertEquals(0x57, f15[0].toInt() and 0xFF)
         assertEquals(0x3F, f15[1].toInt() and 0xFF)
         assertEquals(0x5A, f15[2].toInt() and 0xFF)
         assertEquals(0xA5, f15[3].toInt() and 0xFF)
+        val ktTx = FakeTransport()
+        assertTrue(kt1213.resetEq(ktTx, ktProfile))
+        assertEquals(16, ktTx.sent.size) // 15 bands + 1 refreshEqRam
 
         val cx = Cx31993Protocol()
+        val cxProfile = DacProfile("cx9", "WalkPlay", "CX31993", 0x3302, 0x0001, protocol = ProtocolFamily.CX31993, bandCount = 9)
         val fCx = cx.buildBandPacket(EqBand(0, 1000, 2.0, 1.4, FilterType.PEAK))
         assertEquals(62, fCx.size)
         assertEquals(0x01, fCx[0].toInt() and 0xFF)
+        val cxTx = FakeTransport()
+        assertTrue(cx.resetEq(cxTx, cxProfile))
+        assertEquals(9, cxTx.sent.size)
 
         val gm = Gm55Protocol()
+        val gmProfile = DacProfile("gm55", "EPZ", "GM55", 0x1024, 0x8087, protocol = ProtocolFamily.GM55, bandCount = 10)
         val fGm = gm.buildBandPacket(EqBand(1, 250, -3.0, 1.0, FilterType.LOW_SHELF))
         assertEquals(30, fGm.size)
         assertEquals(0x02, fGm[0].toInt() and 0xFF)
         assertEquals(11, fGm[1].toInt() and 0xFF)
+        val gmTx = FakeTransport()
+        assertTrue(gm.resetEq(gmTx, gmProfile))
+        assertEquals(10, gmTx.sent.size)
+
+        // Verify CB capability gating hides stage/mic flags when profile omits them on non-stage scheme
+        val bareCbCaps = CbProtocol().buildCapabilities(
+            DacProfile("cb_bare", "Generic", "Cable", 0x3302, 0x1111, protocol = ProtocolFamily.CB, schemeNo = "13", supportsDacFilter = false, supportsMic = false)
+        )
+        assertFalse(bareCbCaps.hasDacFilter)
+        assertFalse(bareCbCaps.hasOutputMode)
+        assertFalse(bareCbCaps.hasWorkMode)
+        assertFalse(bareCbCaps.hasMicGain)
+        assertFalse(bareCbCaps.hasMicEnc)
     }
 
     @Test
@@ -955,5 +1017,56 @@ class ProtocolTests {
         assertTrue(btProto.setChannelBalance(streamingTx, btr17BtProfile, 12))
         val balPkt = streamingTx.sent.last()
         assertEquals(listOf(0x12, 0x06, 0x01, 1, 12), balPkt.copyOfRange(7, 12).map { it.toInt() and 0xFF })
+
+        // Verify BTR17 120-step mode keeps dynamicMax = 120 across GET/CE frames and ignores SET ACKs
+        val step120Tx = FakeTransport(
+            descriptor = UsbDeviceDescriptor("btr17_bt", 0, 0, "FIIO BTR17"),
+            transportType = TransportType.BLUETOOTH_SPP,
+            replyFactory = { req ->
+                val b2 = req[7].toInt() and 0xFF
+                val b1 = req[8].toInt() and 0xFF
+                val b0 = req[9].toInt() and 0xFF
+                val v = when ((b2 shl 16) or (b1 shl 8) or b0) {
+                    0x020B01 -> 1   // vol_control = 120 Steps
+                    0x020401 -> 120 // vol_limit = 120
+                    0x020201 -> 95  // vol_call = 95
+                    0x020301 -> 88  // vol_tip = 88
+                    0x020101 -> 74  // device_volume = 74
+                    else -> 0
+                }
+                byteArrayOf(0xFF.toByte(), 0x03, 0x00, 0x03, 0x00, 0x1D, 0xCD.toByte(), b2.toByte(), b1.toByte(), b0.toByte(), v.toByte())
+            }
+        )
+        val state120 = btProto.readDeviceState(step120Tx, btr17BtProfile)
+        assertEquals(120, state120.maxVolume)
+        assertEquals(120, state120.extraControlValues["vol_limit"]?.intValue)
+        assertEquals(120, state120.extraControlValues["vol_limit"]?.dynamicMax)
+        assertEquals(95, state120.extraControlValues["vol_call"]?.intValue)
+        assertEquals(120, state120.extraControlValues["vol_call"]?.dynamicMax)
+        assertEquals(88, state120.extraControlValues["vol_tip"]?.intValue)
+        assertEquals(120, state120.extraControlValues["vol_tip"]?.dynamicMax)
+
+        // Incoming GET/notify packet must NOT wipe dynamicMax to null (which caused 60<->120 oscillation)
+        val volLimitGetFrame = byteArrayOf(0xFF.toByte(), 0x03, 0x00, 0x03, 0x00, 0x1D, 0xCD.toByte(), 0x02, 0x04, 0x01, 120.toByte())
+        val afterGetIncoming = btProto.applyIncomingPacket(volLimitGetFrame, btr17BtProfile, state120)!!
+        assertEquals(120, afterGetIncoming.extraControlValues["vol_limit"]?.dynamicMax)
+        assertEquals(120, afterGetIncoming.extraControlValues["vol_call"]?.dynamicMax)
+        assertEquals(120, afterGetIncoming.extraControlValues["vol_tip"]?.dynamicMax)
+
+        // Incoming GAIA V3 SET status ACK ([0x00] on 0x120B01 / 0x120401) must be ignored
+        val setStepAck = byteArrayOf(0xFF.toByte(), 0x03, 0x00, 0x03, 0x00, 0x1D, 0xCD.toByte(), 0x12, 0x0B, 0x01, 0x00)
+        assertEquals(null, btProto.applyIncomingPacket(setStepAck, btr17BtProfile, state120))
+        val setLimitAck = byteArrayOf(0xFF.toByte(), 0x03, 0x00, 0x03, 0x00, 0x1D, 0xCD.toByte(), 0x12, 0x04, 0x01, 0x00)
+        assertEquals(null, btProto.applyIncomingPacket(setLimitAck, btr17BtProfile, state120))
+
+        // Writing vol_limit / vol_call above 60 in 120-step mode sends exact 110 (not clamped to 60)
+        step120Tx.sent.clear()
+        assertTrue(btProto.setExtraControl(step120Tx, btr17BtProfile, "vol_limit", DacControlValue(intValue = 110, dynamicMax = 120)))
+        assertEquals(110, step120Tx.sent.last().last().toInt() and 0xFF)
+
+        // Check inverted KA5 vol_control option labels ("120 Steps" = 0, "60 Steps" = 1)
+        val ka5Schema = schemas.findByDeviceType(105)!!
+        assertEquals(120, FiioSchemaControlsHelper.resolveStepMax(ka5Schema, 0, 60))
+        assertEquals(60, FiioSchemaControlsHelper.resolveStepMax(ka5Schema, 1, 60))
     }
 }

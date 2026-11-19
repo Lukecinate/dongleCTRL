@@ -260,8 +260,14 @@ fun DeviceDashboardScreen(
                             style = MaterialTheme.typography.bodyLarge,
                             fontWeight = FontWeight.SemiBold
                         )
+                        val preampRounded = (st.globalGainDb * 10.0).roundToInt() / 10.0
+                        val peqSubtitle = if (caps.hasGlobalGain && preampRounded != 0.0) {
+                            "${st.bands.size} bands · ${caps.sampleRate / 1000} kHz DSP · Preamp ${if (preampRounded > 0) "+" else ""}$preampRounded dB"
+                        } else {
+                            "${st.bands.size} bands · ${caps.sampleRate / 1000} kHz DSP · Tap to tune"
+                        }
                         Text(
-                            text = "${st.bands.size} bands · ${caps.sampleRate / 1000} kHz DSP · Tap to tune",
+                            text = peqSubtitle,
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -287,21 +293,6 @@ fun DeviceDashboardScreen(
                     minGainDb = caps.minGainDb,
                     maxGainDb = caps.maxGainDb,
                     interactive = false
-                )
-            }
-
-            if (caps.hasGlobalGain) {
-                SettingSliderRow(
-                    icon = Icons.Rounded.Tune,
-                    title = "Preamp / Global Gain",
-                    valueLabel = "${((st.globalGainDb * 10.0).roundToInt() / 10.0)} dB",
-                    value = st.globalGainDb.toFloat(),
-                    valueRange = caps.globalGainRange.start.toFloat()..caps.globalGainRange.endInclusive.toFloat(),
-                    showDivider = false,
-                    onValueChange = { raw ->
-                        val snapped = (raw * 2f).roundToInt() / 2.0
-                        viewModel.setGlobalGain(snapped)
-                    }
                 )
             }
         }

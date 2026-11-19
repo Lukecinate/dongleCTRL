@@ -37,6 +37,8 @@ class FiioBtProtocol(
     private var lastKnownPresetId: Int? = null
     @Volatile
     private var lastNonBypassPresetId: Int? = null
+    @Volatile
+    private var lastKnownStepMax: Int = 60
 
     private fun schemaFor(profile: DacProfile): FiioDeviceSchema? =
         schemas?.let { cat ->
@@ -191,10 +193,11 @@ class FiioBtProtocol(
 
         val volCtrl = schema.findControl("device_volume", "vol_output", "vol_of_bluetooth", "device_volume_nui")
         val maxVolCtrl = schema.findControl("vol_control", "vol_limit")
-        val volMax = if (maxVolCtrl != null && maxVolCtrl.key == "vol_control" && maxVolCtrl.getCmd > 0) {
-            val stepMode = fetchCmd(maxVolCtrl.getCmd)?.lastOrNull()?.toInt()?.and(0xFF) ?: 0
-            if (stepMode == 1) 120 else (volCtrl?.max ?: 60)
-        } else (volCtrl?.max ?: 60)
+        val stepVal = if (maxVolCtrl != null && maxVolCtrl.key == "vol_control" && maxVolCtrl.getCmd > 0) {
+            fetchCmd(maxVolCtrl.getCmd)?.let { FiioSchemaControlsHelper.decodeResponse(maxVolCtrl, it, isUsb = false).intValue }
+        } else null
+        val volMax = FiioSchemaControlsHelper.resolveStepMax(schema, stepVal, volCtrl?.max ?: 60)
+        lastKnownStepMax = volMax
 
         val vol = if (volCtrl != null && volCtrl.getCmd > 0) {
             fetchCmd(volCtrl.getCmd)?.let { p ->
@@ -346,8 +349,6 @@ class FiioBtProtocol(
         batchCache: Map<Int, ByteArray> = emptyMap()
     ): Pair<Map<String, DacControlValue>, Int?> {
         val extraValues = LinkedHashMap<String, DacControlValue>()
-        val is120Step = volMax >= 100
-        var activeVolLimit: Int? = null
 
         for (ctrl in schema.controls) {
             if (ctrl.key.isBlank() || FiioSchemaControlsHelper.isPrimaryControl(ctrl.key) || ctrl.getCmd <= 0) continue
@@ -369,25 +370,11 @@ class FiioBtProtocol(
                     decoded = decoded.copy(supportMask = FiioSchemaControlsHelper.parseUint(qRaw))
                 }
             }
-            if (ctrl.key == "vol_limit") {
-                activeVolLimit = decoded.intValue
-            }
-            val dynMax = when {
-                ctrl.allowMaxValueChange && is120Step -> 120
-                else -> null
-            }
-            extraValues[ctrl.key] = decoded.copy(dynamicMax = dynMax)
+            extraValues[ctrl.key] = decoded
         }
-        // Propagate vol_limit constraint cleanly to dependent volume controls
-        if (activeVolLimit != null && activeVolLimit in 1..volMax) {
-            for (ctrl in schema.controls) {
-                if (ctrl.allowLimit && extraValues.containsKey(ctrl.key)) {
-                    val cur = extraValues.getValue(ctrl.key)
-                    extraValues[ctrl.key] = cur.copy(dynamicMax = activeVolLimit)
-                }
-            }
-        }
-        return extraValues to activeVolLimit
+        val (recomputed, effMax) = FiioSchemaControlsHelper.recomputeVolumeConstraints(schema, extraValues, volMax)
+        val activeVolLimit = recomputed["vol_limit"]?.intValue?.takeIf { it in 1..effMax }
+        return recomputed to activeVolLimit
     }
 
     private suspend fun readPeqBands(
@@ -683,7 +670,15 @@ class FiioBtProtocol(
         if (ctrl.setCmd <= 0) return false
         val isBle = transport.transportType == TransportType.BLUETOOTH_GATT
         val cbt = schema.commandBuilderType ?: 5
-        val payload = FiioSchemaControlsHelper.encodePayload(ctrl, value, presetSlotId = lastKnownPresetId ?: 0, isUsb = false)
+        val effectiveValue = if (ctrl.allowMaxValueChange && value.dynamicMax == null) {
+            value.copy(dynamicMax = lastKnownStepMax.coerceAtLeast(ctrl.max ?: 60))
+        } else {
+            value
+        }
+        if (key == "vol_control") {
+            lastKnownStepMax = FiioSchemaControlsHelper.resolveStepMax(schema, effectiveValue.intValue, lastKnownStepMax)
+        }
+        val payload = FiioSchemaControlsHelper.encodePayload(ctrl, effectiveValue, presetSlotId = lastKnownPresetId ?: 0, isUsb = false)
         return sendCmd(transport, cbt, isBle, ctrl.setCmd, payload, useShell24 = isV3Cmd24Shell(cbt, VENDOR_FIIO, schema))
     }
 
@@ -728,22 +723,44 @@ class FiioBtProtocol(
         val cbt = schema.commandBuilderType ?: 5
         val useShell = isV3Cmd24Shell(cbt, VENDOR_FIIO, schema)
 
+        transport.drainInput()
         var updated = currentState
         val volCtrl = schema.findControl("device_volume", "vol_output", "vol_of_bluetooth", "device_volume_nui")
-        val maxVolCtrl = schema.findControl("vol_control", "vol_limit")
-        val stepMax = if (maxVolCtrl != null && maxVolCtrl.key == "vol_control" && maxVolCtrl.getCmd > 0) {
-            val step = requestCmd(transport, cbt, isBle, maxVolCtrl.getCmd, useShell24 = useShell)?.lastOrNull()?.toInt()?.and(0xFF)
-            if (step == 1) 120 else (volCtrl?.max ?: 60)
-        } else currentState.maxVolume.coerceAtLeast(volCtrl?.max ?: 60)
+        val volStepCtrl = schema.findControl("vol_control")
+        val liveStepVal = if (volStepCtrl != null && volStepCtrl.getCmd > 0) {
+            requestCmd(transport, cbt, isBle, volStepCtrl.getCmd, useShell24 = useShell)?.let {
+                FiioSchemaControlsHelper.decodeResponse(volStepCtrl, it, isUsb = false)
+            }
+        } else null
+        val effectiveStepVal = liveStepVal?.intValue ?: currentState.extraControlValues["vol_control"]?.intValue
+        val stepMax = FiioSchemaControlsHelper.resolveStepMax(
+            schema,
+            effectiveStepVal,
+            lastKnownStepMax.coerceAtLeast(volCtrl?.max ?: 60)
+        )
+        lastKnownStepMax = stepMax
 
         val volLimitCtrl = schema.findControl("vol_limit")
-        val lim = if (volLimitCtrl != null && volLimitCtrl.getCmd > 0) {
+        val liveLimitVal = if (volLimitCtrl != null && volLimitCtrl.getCmd > 0) {
             requestCmd(transport, cbt, isBle, volLimitCtrl.getCmd, useShell24 = useShell)?.let { p ->
-                FiioSchemaControlsHelper.decodeResponse(volLimitCtrl, p, isUsb = false).intValue
+                FiioSchemaControlsHelper.decodeResponse(volLimitCtrl, p, isUsb = false)
             }
         } else null
 
-        val effectiveMaxVol = lim?.takeIf { it in 20..stepMax } ?: stepMax
+        var nextExtras = updated.extraControlValues
+        if (liveStepVal != null) {
+            nextExtras = nextExtras + ("vol_control" to liveStepVal)
+        }
+        if (liveLimitVal != null) {
+            nextExtras = nextExtras + ("vol_limit" to liveLimitVal)
+        }
+        val (fastExtras, fastMaxVol) = FiioSchemaControlsHelper.recomputeVolumeConstraints(schema, nextExtras, stepMax)
+        val effectiveMaxVol = fastMaxVol
+        updated = updated.copy(
+            maxVolume = effectiveMaxVol,
+            volume = updated.volume.coerceIn(0, effectiveMaxVol),
+            extraControlValues = fastExtras
+        )
 
         if (volCtrl != null && volCtrl.getCmd > 0) {
             requestCmd(transport, cbt, isBle, volCtrl.getCmd, useShell24 = useShell)?.let { p ->
@@ -847,11 +864,16 @@ class FiioBtProtocol(
             }
             val (extraValues, refreshedLim) = readExtraControlsMap(transport, schema, cbt, isBle, useShell, stepMax)
             if (extraValues.isNotEmpty()) {
-                val nextMax = refreshedLim?.takeIf { it in 20..stepMax } ?: stepMax
+                val (mergedExtras, mergedMaxVol) = FiioSchemaControlsHelper.recomputeVolumeConstraints(
+                    schema,
+                    updated.extraControlValues + extraValues,
+                    stepMax
+                )
+                val nextMax = refreshedLim?.takeIf { it in 20..stepMax } ?: mergedMaxVol
                 updated = updated.copy(
                     maxVolume = nextMax,
                     volume = updated.volume.coerceIn(0, nextMax),
-                    extraControlValues = updated.extraControlValues + extraValues
+                    extraControlValues = mergedExtras
                 )
             }
             if (schema.editNameGetCmd > 0) {
@@ -878,6 +900,12 @@ class FiioBtProtocol(
         return updated
     }
 
+    private data class ParsedIncomingFrame(
+        val cmdId: Int,
+        val payload: ByteArray,
+        val isCommandReplyAck: Boolean
+    )
+
     override fun applyIncomingPacket(
         packet: ByteArray,
         profile: DacProfile,
@@ -889,7 +917,9 @@ class FiioBtProtocol(
         val useShell = isV3Cmd24Shell(cbt, VENDOR_FIIO, schema)
 
         // Extract command + payload from unsolicited BT notification/response frame
-        val (cmdId, payload) = extractCommandAndPayload(packet, isBle, cbt, useShell) ?: return null
+        val parsed = extractCommandAndPayload(packet, isBle, cbt, useShell) ?: return null
+        val cmdId = parsed.cmdId
+        val payload = parsed.payload
         if (payload.isEmpty()) return null
 
         val volCtrl = schema.findControl("device_volume", "vol_output", "vol_of_bluetooth", "device_volume_nui")
@@ -897,14 +927,20 @@ class FiioBtProtocol(
         val gainCtrl = schema.findControl("gain_level", "gain")
         val balCtrl = schema.findControl("channel_balance")
 
+        fun isWriteOnlyAck(getCmd: Int?, setCmd: Int?): Boolean =
+            parsed.isCommandReplyAck && cmdId == setCmd && setCmd != getCmd
+
         return when (cmdId) {
-            volCtrl?.getCmd, volCtrl?.setCmd ->
+            volCtrl?.getCmd, volCtrl?.setCmd -> {
+                if (isWriteOnlyAck(volCtrl?.getCmd, volCtrl?.setCmd)) return null
                 volCtrl?.let {
                     currentState.copy(
                         volume = FiioSchemaControlsHelper.decodeResponse(it, payload, isUsb = false).intValue.coerceIn(0, currentState.maxVolume)
                     )
                 }
+            }
             schema.eqPresetGetCmd, schema.eqPresetSetCmd -> {
+                if (isWriteOnlyAck(schema.eqPresetGetCmd, schema.eqPresetSetCmd)) return null
                 val pid = parseUintPayload(payload)
                 lastKnownPresetId = pid
                 if (schema.bypassPresetId == null || pid != schema.bypassPresetId) lastNonBypassPresetId = pid
@@ -915,17 +951,25 @@ class FiioBtProtocol(
                 }
                 currentState.copy(activePresetId = pid, eqEnabled = nextEq)
             }
-            schema.eqSwitchGetCmd, schema.eqSwitchSetCmd ->
+            schema.eqSwitchGetCmd, schema.eqSwitchSetCmd -> {
+                if (isWriteOnlyAck(schema.eqSwitchGetCmd, schema.eqSwitchSetCmd)) return null
                 currentState.copy(eqEnabled = FiioPeqCodec.decodeEqSwitch(payload, schema.eqSwitchRuler))
-            filterCtrl?.getCmd, filterCtrl?.setCmd ->
+            }
+            filterCtrl?.getCmd, filterCtrl?.setCmd -> {
+                if (isWriteOnlyAck(filterCtrl?.getCmd, filterCtrl?.setCmd)) return null
                 filterCtrl?.let { currentState.copy(dacFilterIndex = FiioSchemaControlsHelper.decodeResponse(it, payload, isUsb = false).intValue) }
-            gainCtrl?.getCmd, gainCtrl?.setCmd ->
+            }
+            gainCtrl?.getCmd, gainCtrl?.setCmd -> {
+                if (isWriteOnlyAck(gainCtrl?.getCmd, gainCtrl?.setCmd)) return null
                 gainCtrl?.let { currentState.copy(workModeIndex = FiioSchemaControlsHelper.decodeResponse(it, payload, isUsb = false).intValue) }
-            balCtrl?.getCmd, balCtrl?.setCmd ->
+            }
+            balCtrl?.getCmd, balCtrl?.setCmd -> {
+                if (isWriteOnlyAck(balCtrl?.getCmd, balCtrl?.setCmd)) return null
                 balCtrl?.let {
                     val maxBal = it.max ?: 12
                     currentState.copy(channelBalance = decodeBtBalance(cbt, payload, it.parseRulerType).coerceIn(-maxBal, maxBal))
                 }
+            }
             schema.batteryGetCmd -> {
                 val rawB = payload.last().toInt() and 0xFF
                 val pct = if (cbt == 61451) ((rawB - 1).coerceIn(0, 4)) * 25 else rawB
@@ -939,13 +983,30 @@ class FiioBtProtocol(
             else -> {
                 val ctrl = schema.controls.firstOrNull { !FiioSchemaControlsHelper.isPrimaryControl(it.key) && (it.getCmd == cmdId || it.setCmd == cmdId) }
                     ?: return null
+                if (isWriteOnlyAck(ctrl.getCmd, ctrl.setCmd)) return null
                 val decoded = FiioSchemaControlsHelper.decodeResponse(ctrl, payload, isUsb = false)
-                currentState.copy(extraControlValues = currentState.extraControlValues + (ctrl.key to decoded))
+                val stepHint = if (ctrl.key == "vol_control") {
+                    FiioSchemaControlsHelper.resolveStepMax(schema, decoded.intValue, lastKnownStepMax).also {
+                        lastKnownStepMax = it
+                    }
+                } else {
+                    lastKnownStepMax
+                }
+                val (recomputed, effMax) = FiioSchemaControlsHelper.recomputeVolumeConstraints(
+                    schema,
+                    currentState.extraControlValues + (ctrl.key to decoded),
+                    stepHint
+                )
+                currentState.copy(
+                    maxVolume = effMax,
+                    volume = currentState.volume.coerceIn(0, effMax),
+                    extraControlValues = recomputed
+                )
             }
         }
     }
 
-    private fun extractCommandAndPayload(raw: ByteArray, isBle: Boolean, cbt: Int, useShell24: Boolean): Pair<Int, ByteArray>? {
+    private fun extractCommandAndPayload(raw: ByteArray, isBle: Boolean, cbt: Int, useShell24: Boolean): ParsedIncomingFrame? {
         if (cbt == 61451) {
             if (raw.size < 3) return null
             val b0 = raw[0].toInt() and 0xFF
@@ -962,10 +1023,12 @@ class FiioBtProtocol(
             }
             val end = if ((raw.last().toInt() and 0xFF) == 0xFE) raw.size - 1 else raw.size
             val pay = if (end > 2) raw.copyOfRange(2, end) else byteArrayOf()
-            return cmdId to pay
+            return ParsedIncomingFrame(cmdId, pay, isCommandReplyAck = false)
         }
         return when (family) {
-            ProtocolFamily.FIIO_BT_BR13 -> parseBr13Frame(raw)
+            ProtocolFamily.FIIO_BT_BR13 -> parseBr13Frame(raw)?.let { (c, p) ->
+                ParsedIncomingFrame(c, p, isCommandReplyAck = false)
+            }
             ProtocolFamily.FIIO_BT_GAIA -> {
                 if (useShell24) {
                     val start = if (isBle) 0 else findGaiaStart(raw)
@@ -980,21 +1043,24 @@ class FiioBtProtocol(
                         val rxCmd = ((raw[base + 3].toInt() and 0xFF) shl 16) or
                             ((raw[base + 4].toInt() and 0xFF) shl 8) or
                             (raw[base + 5].toInt() and 0xFF)
-                        rxCmd to raw.copyOfRange(base + 6, start + 8 + pLen)
+                        ParsedIncomingFrame(rxCmd, raw.copyOfRange(base + 6, start + 8 + pLen), isCommandReplyAck = (op == OP_GAIA_V3_RX))
                     } else {
                         if (BytePack.getU16Be(raw, 0) != VENDOR_QUALCOMM_V3) return null
+                        val op = raw[2].toInt() and 0xFF
+                        if (op != OP_GAIA_V3_RX && op != 0xCE) return null
                         val rxCmd = ((raw[3].toInt() and 0xFF) shl 16) or
                             ((raw[4].toInt() and 0xFF) shl 8) or
                             (raw[5].toInt() and 0xFF)
-                        rxCmd to raw.copyOfRange(6, raw.size)
+                        ParsedIncomingFrame(rxCmd, raw.copyOfRange(6, raw.size), isCommandReplyAck = (op == OP_GAIA_V3_RX))
                     }
                 } else if (!isBle) {
                     val idx = findGaiaStart(raw)
                     if (idx < 0 || idx + 8 > raw.size) return null
                     val pLen = raw[idx + 3].toInt() and 0xFF
                     if (idx + 8 + pLen > raw.size) return null
-                    val cmd16 = BytePack.getU16Be(raw, idx + 6) and 0x7FFF
-                    cmd16 to raw.copyOfRange(idx + 8, idx + 8 + pLen)
+                    val respCmd = BytePack.getU16Be(raw, idx + 6)
+                    val isAck = (respCmd and 0x8000) != 0
+                    ParsedIncomingFrame(respCmd and 0x7FFF, raw.copyOfRange(idx + 8, idx + 8 + pLen), isCommandReplyAck = isAck)
                 } else null
             }
             ProtocolFamily.FIIO_BT_UNIVERSAL -> {
@@ -1008,7 +1074,7 @@ class FiioBtProtocol(
                 val cmd24 = ((raw[start + 4].toInt() and 0xFF) shl 16) or
                     ((raw[start + 5].toInt() and 0xFF) shl 8) or
                     (raw[start + 6].toInt() and 0xFF)
-                cmd24 to raw.copyOfRange(start + 7, start + len - 2)
+                ParsedIncomingFrame(cmd24, raw.copyOfRange(start + 7, start + len - 2), isCommandReplyAck = false)
             }
             else -> null
         }

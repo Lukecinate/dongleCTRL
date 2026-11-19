@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
@@ -31,6 +33,7 @@ import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -45,6 +48,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,7 +57,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.suprcharg3d.dongleCTRL.ui.ActiveDacSession
@@ -63,6 +73,13 @@ import com.suprcharg3d.dongleCTRL.dsp.BiquadCalculator
 import com.suprcharg3d.dongleCTRL.dsp.EqBand
 import com.suprcharg3d.dongleCTRL.dsp.EqPreset
 import kotlin.math.roundToInt
+
+private enum class PeqNumericTarget {
+    GAIN,
+    FREQUENCY,
+    Q_FACTOR,
+    PREAMP
+}
 
 @Composable
 fun EqualizerScreen(
@@ -83,6 +100,13 @@ fun EqualizerScreen(
     var showPresetDialog by remember { mutableStateOf(false) }
     var showSavePresetDialog by remember { mutableStateOf(false) }
     var newPresetName by remember { mutableStateOf("") }
+    var numericEditTarget by remember { mutableStateOf<PeqNumericTarget?>(null) }
+    var numericField by remember { mutableStateOf(TextFieldValue("")) }
+
+    fun openNumericEditor(target: PeqNumericTarget, initialText: String) {
+        numericField = TextFieldValue(initialText, selection = TextRange(0, initialText.length))
+        numericEditTarget = target
+    }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val isCompact = maxHeight < 760.dp
@@ -240,6 +264,21 @@ fun EqualizerScreen(
 
             Spacer(modifier = Modifier.height(sectionGap))
 
+            if (caps.hasGlobalGain) {
+                InlinePreampBar(
+                    globalGainDb = session.state.globalGainDb,
+                    gainRange = caps.globalGainRange,
+                    compact = isCompact,
+                    veryCompact = isVeryCompact,
+                    onChangeGain = viewModel::setGlobalGain,
+                    onTapValue = {
+                        val cur = (session.state.globalGainDb * 10.0).roundToInt() / 10.0
+                        openNumericEditor(PeqNumericTarget.PREAMP, "$cur")
+                    }
+                )
+                Spacer(modifier = Modifier.height(sectionGap))
+            }
+
             // Selected Band Controls Card
             if (selectedBand != null) {
                 BandEditorCard(
@@ -251,7 +290,18 @@ fun EqualizerScreen(
                     maxQ = caps.maxQ,
                     compact = isCompact,
                     veryCompact = isVeryCompact,
-                    onUpdate = viewModel::updateBand
+                    onUpdate = viewModel::updateBand,
+                    onTapGainValue = {
+                        val cur = (selectedBand.gainDb * 10.0).roundToInt() / 10.0
+                        openNumericEditor(PeqNumericTarget.GAIN, "$cur")
+                    },
+                    onTapFreqValue = {
+                        openNumericEditor(PeqNumericTarget.FREQUENCY, "${selectedBand.frequencyHz}")
+                    },
+                    onTapQValue = {
+                        val cur = (selectedBand.q * 100.0).roundToInt() / 100.0
+                        openNumericEditor(PeqNumericTarget.Q_FACTOR, "$cur")
+                    }
                 )
             }
 
@@ -289,22 +339,36 @@ fun EqualizerScreen(
                             )
                         }
                     }
-                    Button(
-                        onClick = { viewModel.saveToHardwareFlash() },
-                        contentPadding = buttonPadding,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(buttonHeight)
-                    ) {
-                        Icon(Icons.Rounded.Save, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Save to Flash",
-                            style = buttonTextStyle,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                    if (caps.supportsFlashSave) {
+                        val hasUnsaved = session.hasUnsavedFlashEdits
+                        Button(
+                            onClick = { viewModel.saveToHardwareFlash() },
+                            contentPadding = buttonPadding,
+                            colors = if (hasUnsaved) {
+                                ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                )
+                            } else {
+                                ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(buttonHeight)
+                        ) {
+                            Icon(Icons.Rounded.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (hasUnsaved) "Save to Flash •" else "Save to Flash",
+                                style = buttonTextStyle,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
 
@@ -439,6 +503,156 @@ fun EqualizerScreen(
             }
         )
     }
+
+    numericEditTarget?.let { target ->
+        val band = selectedBand
+        val dialogTitle = when (target) {
+            PeqNumericTarget.GAIN -> "Band ${(band?.index ?: 0) + 1} Gain (dB)"
+            PeqNumericTarget.FREQUENCY -> "Band ${(band?.index ?: 0) + 1} Frequency (Hz)"
+            PeqNumericTarget.Q_FACTOR -> "Band ${(band?.index ?: 0) + 1} Q Factor"
+            PeqNumericTarget.PREAMP -> "Preamp Gain (dB)"
+        }
+        val rangeHint = when (target) {
+            PeqNumericTarget.GAIN -> "${caps.minGainDb} .. ${caps.maxGainDb} dB"
+            PeqNumericTarget.FREQUENCY -> "10 .. 24000 Hz"
+            PeqNumericTarget.Q_FACTOR -> "${caps.minQ} .. ${caps.maxQ}"
+            PeqNumericTarget.PREAMP -> "${caps.globalGainRange.start} .. ${caps.globalGainRange.endInclusive} dB"
+        }
+        val submitNumericValue = {
+            val parsed = numericField.text.trim().replace(',', '.').toDoubleOrNull()
+            if (parsed != null) {
+                when (target) {
+                    PeqNumericTarget.GAIN -> if (band != null) {
+                        val clamped = parsed.coerceIn(caps.minGainDb, caps.maxGainDb)
+                        viewModel.updateBand(band.copy(gainDb = (clamped * 10.0).roundToInt() / 10.0))
+                    }
+                    PeqNumericTarget.FREQUENCY -> if (band != null) {
+                        viewModel.updateBand(band.copy(frequencyHz = parsed.roundToInt().coerceIn(10, 24000)))
+                    }
+                    PeqNumericTarget.Q_FACTOR -> if (band != null) {
+                        val clamped = parsed.coerceIn(caps.minQ, caps.maxQ)
+                        viewModel.updateBand(band.copy(q = (clamped * 100.0).roundToInt() / 100.0))
+                    }
+                    PeqNumericTarget.PREAMP -> {
+                        val clamped = parsed.coerceIn(caps.globalGainRange)
+                        viewModel.setGlobalGain((clamped * 10.0).roundToInt() / 10.0)
+                    }
+                }
+                numericEditTarget = null
+            }
+        }
+        val focusRequester = remember(target) { FocusRequester() }
+        LaunchedEffect(target) { focusRequester.requestFocus() }
+
+        AlertDialog(
+            onDismissRequest = { numericEditTarget = null },
+            title = { Text(dialogTitle) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = numericField,
+                        onValueChange = { numericField = it },
+                        singleLine = true,
+                        label = { Text("Allowed: $rangeHint") },
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = if (target == PeqNumericTarget.FREQUENCY) KeyboardType.Number else KeyboardType.Decimal,
+                            imeAction = ImeAction.Done
+                        ),
+                        keyboardActions = KeyboardActions(onDone = { submitNumericValue() }),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(focusRequester)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = { submitNumericValue() }) {
+                    Text("Apply")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { numericEditTarget = null }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun InlinePreampBar(
+    globalGainDb: Double,
+    gainRange: ClosedFloatingPointRange<Double>,
+    compact: Boolean,
+    veryCompact: Boolean,
+    onChangeGain: (Double) -> Unit,
+    onTapValue: () -> Unit
+) {
+    val labelStyle = if (veryCompact) MaterialTheme.typography.labelMedium else MaterialTheme.typography.bodyMedium
+    val rounded = (globalGainDb * 10.0).roundToInt() / 10.0
+    val display = "${if (rounded > 0) "+" else ""}$rounded dB"
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(if (compact) 14.dp else 16.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 28.dp) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = if (compact) 12.dp else 14.dp, vertical = if (veryCompact) 3.dp else 5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Preamp",
+                    style = labelStyle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                IconButton(
+                    onClick = {
+                        val next = (globalGainDb - 0.5).coerceIn(gainRange)
+                        onChangeGain((next * 10.0).roundToInt() / 10.0)
+                    },
+                    modifier = Modifier.size(if (veryCompact) 24.dp else 28.dp)
+                ) {
+                    Icon(Icons.Rounded.Remove, contentDescription = "Decrease Preamp", modifier = Modifier.size(15.dp))
+                }
+                Slider(
+                    value = globalGainDb.toFloat().coerceIn(gainRange.start.toFloat(), gainRange.endInclusive.toFloat()),
+                    onValueChange = { raw ->
+                        onChangeGain((raw * 10f).roundToInt() / 10.0)
+                    },
+                    valueRange = gainRange.start.toFloat()..gainRange.endInclusive.toFloat(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(if (veryCompact) 24.dp else 28.dp)
+                )
+                IconButton(
+                    onClick = {
+                        val next = (globalGainDb + 0.5).coerceIn(gainRange)
+                        onChangeGain((next * 10.0).roundToInt() / 10.0)
+                    },
+                    modifier = Modifier.size(if (veryCompact) 24.dp else 28.dp)
+                ) {
+                    Icon(Icons.Rounded.Add, contentDescription = "Increase Preamp", modifier = Modifier.size(15.dp))
+                }
+                Spacer(modifier = Modifier.width(4.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClick = onTapValue)
+                ) {
+                    Text(
+                        text = display,
+                        style = if (veryCompact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -451,7 +665,10 @@ private fun BandEditorCard(
     maxQ: Double,
     compact: Boolean,
     veryCompact: Boolean,
-    onUpdate: (EqBand) -> Unit
+    onUpdate: (EqBand) -> Unit,
+    onTapGainValue: () -> Unit,
+    onTapFreqValue: () -> Unit,
+    onTapQValue: () -> Unit
 ) {
     val sliderHeight = when {
         veryCompact -> 24.dp
@@ -529,13 +746,14 @@ private fun BandEditorCard(
 
                 Spacer(modifier = Modifier.height(if (veryCompact) 4.dp else if (compact) 6.dp else 8.dp))
 
-                // Gain slider + steppers
+                // Gain slider + steppers + tap-to-type
                 val gainDisplay = "${if (band.gainDb > 0) "+" else ""}${(band.gainDb * 10.0).roundToInt() / 10.0} dB"
                 ParameterHeaderRow(
                     label = "Gain",
                     valueText = gainDisplay,
                     compact = compact,
                     veryCompact = veryCompact,
+                    onTapValue = onTapGainValue,
                     onMinus = { onUpdate(band.copy(gainDb = ((band.gainDb - 0.5) * 10).roundToInt() / 10.0)) },
                     onPlus = { onUpdate(band.copy(gainDb = ((band.gainDb + 0.5) * 10).roundToInt() / 10.0)) }
                 )
@@ -548,13 +766,14 @@ private fun BandEditorCard(
                         .height(sliderHeight)
                 )
 
-                // Frequency slider (log-scaled for musical precision)
+                // Frequency slider (log-scaled for musical precision) + tap-to-type
                 val normFreq = BiquadCalculator.normalizedXForFrequency(band.frequencyHz.toDouble()).toFloat()
                 ParameterHeaderRow(
                     label = "Frequency",
                     valueText = "${band.frequencyHz} Hz",
                     compact = compact,
                     veryCompact = veryCompact,
+                    onTapValue = onTapFreqValue,
                     onMinus = { onUpdate(band.copy(frequencyHz = (band.frequencyHz * 0.95).roundToInt().coerceAtLeast(10))) },
                     onPlus = { onUpdate(band.copy(frequencyHz = (band.frequencyHz * 1.05).roundToInt().coerceAtMost(22000))) }
                 )
@@ -569,13 +788,14 @@ private fun BandEditorCard(
                         .height(sliderHeight)
                 )
 
-                // Q-factor slider
+                // Q-factor slider + tap-to-type
                 val qDisplay = "${(band.q * 100.0).roundToInt() / 100.0}"
                 ParameterHeaderRow(
                     label = "Q Factor",
                     valueText = qDisplay,
                     compact = compact,
                     veryCompact = veryCompact,
+                    onTapValue = onTapQValue,
                     onMinus = { onUpdate(band.copy(q = ((band.q - 0.1) * 100).roundToInt() / 100.0)) },
                     onPlus = { onUpdate(band.copy(q = ((band.q + 0.1) * 100).roundToInt() / 100.0)) }
                 )
@@ -598,6 +818,7 @@ private fun ParameterHeaderRow(
     valueText: String,
     compact: Boolean,
     veryCompact: Boolean,
+    onTapValue: () -> Unit,
     onMinus: () -> Unit,
     onPlus: () -> Unit
 ) {
@@ -616,12 +837,21 @@ private fun ParameterHeaderRow(
         IconButton(onClick = onMinus, modifier = Modifier.size(btnSize)) {
             Icon(Icons.Rounded.Remove, contentDescription = "Decrease $label", modifier = Modifier.size(16.dp))
         }
-        Text(
-            text = valueText,
-            style = labelStyle,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = if (compact) 6.dp else 8.dp)
-        )
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier
+                .padding(horizontal = if (compact) 4.dp else 6.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onTapValue)
+        ) {
+            Text(
+                text = valueText,
+                style = labelStyle,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = if (compact) 8.dp else 10.dp, vertical = 2.dp)
+            )
+        }
         IconButton(onClick = onPlus, modifier = Modifier.size(btnSize)) {
             Icon(Icons.Rounded.Add, contentDescription = "Increase $label", modifier = Modifier.size(16.dp))
         }

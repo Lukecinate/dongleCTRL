@@ -74,6 +74,10 @@ class Gm55Protocol : DacProtocol {
         return transport.send(pkt)
     }
 
+    override suspend fun resetEq(transport: DacTransport, profile: DacProfile): Boolean {
+        return writeAllEqBands(transport, profile, DefaultBands.flatBands(10), 0.0, 0)
+    }
+
     internal fun buildBandPacket(band: EqBand): ByteArray {
         val coeffs = BiquadCalculator.compute(band, 48_000)
         val q27 = BiquadCalculator.quantizeQ5_27(coeffs)
