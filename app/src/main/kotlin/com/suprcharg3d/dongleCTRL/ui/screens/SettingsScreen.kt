@@ -261,7 +261,7 @@ fun SettingsScreen(
             title = { Text("dongleCTRL") },
             text = {
                 Text(
-                    "Offline-first USB & Bluetooth DAC/AMP PEQ controller with zero telemetry and no login.\n\n" +
+                    "Multi-protocol USB & Bluetooth DAC/AMP controller and Parametric EQ (PEQ) suite.\n\n" +
                         "Transports:\n" +
                         "• USB HID, USB Serial (CDC) & Bluetooth (SPP / BLE GATT)\n\n" +
                         "Supported engines & chipsets:\n" +
@@ -270,8 +270,10 @@ fun SettingsScreen(
                         "• Conexant CX31993 & GM55\n" +
                         "• FiiO USB HID (V1/V2 & GigaWit bridge), Desktop Serial (K15/K17/K19) & Bluetooth (GAIA V1/V3, Universal, BR13, Q5)\n\n" +
                         "Features:\n" +
-                        "• Real-time PEQ, AutoEQ import/export & offline presets\n" +
-                        "• Hardware controls (Gain, DAC Filter, Balance, Volume, Scene, RGB)",
+                        "• Interactive PEQ, AutoEQ import/export & 10-band presets\n" +
+                        "• Hardware controls (Gain, DAC Filter, Balance, Volume, Scene, RGB)\n\n" +
+                        "Disclaimer:\n" +
+                        "• Provided AS-IS without warranty. You use this app at your own risk; the authors are not responsible for any DAC bricking, corrupted flash/firmware, IEM damage, or hearing injury.",
                     style = MaterialTheme.typography.bodyMedium
                 )
             },

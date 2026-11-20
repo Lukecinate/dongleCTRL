@@ -158,5 +158,10 @@ An instrumentation test ([`LiveBtr17BluetoothTest.kt`](app/src/androidTest/kotli
 
 ## Notes & Disclaimer
 
-- Protocol support is implemented via clean-room hardware analysis and testing across supported DAC families. Use caution with firmware/flash writes or gain limits on sensitive IEMs.
-- Not affiliated with EPZ, WalkPlay, FiiO, JadeAudio, Snowsky, KTMicro, or Conexant. All product names and trademarks belong to their respective owners.
+> **USE AT YOUR OWN RISK — NO WARRANTY OR LIABILITY**
+>
+> This software communicates directly with external audio hardware over low-level USB HID, USB Serial, and Bluetooth protocols and writes DSP/EQ configuration registers and flash memory. **By using dongleCTRL, you assume all risk.** The authors and contributors are **not responsible or liable for any hardware damage, bricked devices, corrupted firmware/flash, hearing loss, or speaker/IEM damage** resulting from the use or misuse of this application.
+
+- Protocol support is implemented via clean-room hardware analysis and testing across supported DAC families. Vendor firmware behavior varies across models and firmware revisions; double-check gain limits, preamp headroom, and custom EQ slot selections before flashing or playing at high volume on sensitive IEMs.
+- Not affiliated with, endorsed by, or supported by EPZ, WalkPlay, FiiO, JadeAudio, Snowsky, KTMicro, Conexant, or any other manufacturer. All product names and trademarks belong to their respective owners.
+- Prebuilt APK binaries are provided on the [GitHub Releases](https://github.com/suprcharg3d/dongleCTRL/releases) page.
