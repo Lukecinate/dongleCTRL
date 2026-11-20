@@ -5,48 +5,50 @@
 <h1 align="center">dongleCTRL</h1>
 
 <p align="center">
-  <strong>Offline-first Android USB & Bluetooth DAC/AMP hardware controller and Parametric EQ (PEQ) suite</strong><br/>
-  Zero telemetry · Zero cloud accounts · Pure hardware protocol control
+  <strong>Multi-protocol Android USB & Bluetooth DAC/AMP controller and Parametric EQ (PEQ) suite</strong><br/>
+  USB HID · USB Serial (CDC) · Bluetooth Classic SPP · Bluetooth LE GATT
 </p>
 
 ---
 
 ## Overview
 
-**dongleCTRL** (`com.suprcharg3d.dongleCTRL`) is a native Android application built with Kotlin and Jetpack Compose (Material 3) for configuring USB-C DAC dongles, desktop USB DACs, and Bluetooth DAC/AMPs directly from your phone—completely offline.
+**dongleCTRL** (`com.suprcharg3d.dongleCTRL`) is a native Android application built with Kotlin and Jetpack Compose (Material 3) for configuring USB-C DAC dongles, desktop USB DACs, and wireless Bluetooth DAC/AMPs directly from hardware protocols.
 
-Instead of relying on vendor cloud accounts, web wrappers, or tracking SDKs, dongleCTRL implements native binary protocols across **USB HID**, **USB Serial (CDC)**, **Bluetooth Classic SPP**, and **Bluetooth Low Energy (BLE GATT)**.
+Instead of wrapping vendor web pages, dongleCTRL implements native binary protocols across **USB HID**, **USB Serial (CDC)**, **Bluetooth Classic SPP**, and **Bluetooth Low Energy (BLE GATT)** for 15 protocol families, running locally on-device with no accounts or network dependencies.
 
 ---
 
 ## Features
 
-- **Interactive Parametric EQ (PEQ)**
-  - Real-time logarithmic frequency response curve (`20 Hz – 20 kHz`) with isolated per-band bell preview and draggable control handles
-  - Responsive auto-scaling layout on phones (no accidental vertical scrolling while dragging nodes on the graph)
-  - Per-band **Filter Type** (`Peak`, `Low Shelf`, `High Shelf`, `Low Pass`, `High Pass`, `Band Pass`, `All Pass` depending on hardware), **Frequency**, **Gain**, **Q Factor**, **Preamp / Global Gain**, and per-band bypass
-  - Live RAM updates while dragging sliders (`Instant Live PEQ Sync`) or explicit **Apply RAM** + **Save to Flash** persistence
-- **AutoEQ / Squiglink Import & Export**
-  - Standard **EqualizerAPO / AutoEQ / Squiglink** `.txt` import and export (`Preamp:` + `Filter N: ON/OFF PK/LSC/HSC/... Fc ... Hz Gain ... dB Q ...`)
-  - **FiiO XML** filter import support
-  - Automatic band-count adaptation, filter fallback, and gain/Q clamping per target DAC
-- **Offline Preset Library**
-  - Built-in reference presets (*Reference Flat*, *Harman Target Warmth*, *Vocal Clarity*, *Sub-Bass Punch*)
-  - Save, apply, and delete custom local presets stored offline in app storage
-- **Hardware & Schema-Driven Controls**
-  - **DAC Digital Filters**, **Gain Level**, **L/R Channel Balance**, **Hardware EQ Toggle**, **Hardware Preset Slots & Custom Slot Renaming**, **Hardware Volume**
-  - Dynamic schema-driven controls for supported FiiO USB & Bluetooth devices (scene modes, screen brightness/timeout, UAC mode, RGB indicators, button gestures, battery/codec status, Bluetooth device renaming, actions)
-  - Manual protocol family override per USB device when testing generic/unlisted dongles
-- **Protocol Debug Log**
-  - Built-in real-time raw packet trace viewer (`TX` / `RX` hex frames across USB HID, Serial, SPP, and BLE) with one-tap **Copy** to clipboard and **Clear**
-- **Theme Support**
+- **Multi-Protocol Device Discovery & Management (`DEVICES`)**
+  - Auto-detection across USB-C OTG (HID + CDC/Serial) and Bluetooth (Classic SPP + BLE GATT), backed by a bundled catalog of **498 device profiles**, **76 FiiO control schemas**, and **89 device illustrations**
+  - Manual protocol family override per USB device for generic or unlisted dongles
+- **Interactive Parametric EQ (`Equalizer`)**
+  - Real-time logarithmic frequency response curve (`20 Hz – 20 kHz`) with draggable handles and isolated per-band bell preview
+  - Responsive phone layout that prevents accidental vertical scrolling while dragging nodes on the graph
+  - Inline **Preamp / Global Gain** bar plus sliders, `-`/`+` steppers, and **tap-to-type exact numeric entry** for Preamp, Frequency, Gain, and Q Factor
+  - Per-band **Filter Type** (`Peak`, `Low Shelf`, `High Shelf`, `Low Pass`, `High Pass`, `Band Pass`, `All Pass` depending on hardware) and bypass switch
+  - Live RAM sync while dragging (`Instant Live PEQ Sync`) or manual **Apply RAM** + **Save to Flash** persistence
+  - Direct **Presets** picker and **Save to Presets** buttons from the PEQ screen
+- **10-Band Preset Manager & AutoEQ Import/Export (`PRESETS`)**
+  - Create, edit, and delete custom **10-band** presets stored locally on your phone using the full interactive PEQ curve editor
+  - Import **EqualizerAPO / AutoEQ / Squiglink `.txt`** and **FiiO XML** profiles (up to 64 parsed bands): presets with `<= 10` active bands auto-pad tail slots with flat `0.0 dB`, while imports with `> 10` active bands open a selection dialog (with *First 10* and *Strongest* quick picks)
+  - Export any saved preset to standard AutoEQ / EqualizerAPO `.txt` format
+  - **Smart Hardware Apply Flow**:
+    - Prompts you to pick a **Target DAC** when multiple USB/Bluetooth DACs are available
+    - Prompts you to pick a **Custom User Slot** on multi-slot DACs (e.g., FiiO `USER1`–`USER10`), and automatically switches to a writable slot before applying and saving to flash so factory presets are not overwritten
+    - Compares active (non-flat, enabled) bands against the DAC's band limit: auto-fits without prompting when active bands fit (including applying a 10-band preset with 5 active bands to a 5-band DAC), or opens a band-selection prompt when active bands exceed hardware limits
+- **Hardware & Schema-Driven Controls (`Dashboard`)**
+  - **DAC Digital Filters**, **Gain Level**, **L/R Channel Balance**, **Hardware EQ Toggle**, **Hardware Preset Slots & Custom Slot Renaming**, **Hardware Volume** (including 60/120-step scaling on supported devices)
+  - Schema-driven controls for FiiO USB & Bluetooth devices (scene modes, screen brightness/timeout, UAC mode, volume limits, RGB indicators, button gestures, battery/codec telemetry, Bluetooth renaming, hardware actions)
+- **Protocol Debug Log & Themes (`SETTINGS`)**
+  - Real-time raw packet trace viewer (`TX` / `RX` hex frames across USB HID, Serial, SPP, and BLE) with one-tap **Copy** and **Clear**
   - `Follow System`, `Dark`, and `Light` Material 3 themes
 
 ---
 
 ## Supported Protocols & Hardware
-
-dongleCTRL bundles an offline catalog of **498 device profiles**, **76 FiiO control schemas**, and **89 product images**, covering 15 `ProtocolFamily` profiles across 9 hardware protocol drivers:
 
 | Driver | `ProtocolFamily` Variants | Transport(s) | Typical Chipsets / Devices |
 | :--- | :--- | :--- | :--- |
@@ -75,13 +77,14 @@ dongleCTRL
 │       ├── BiquadCalculator.kt      # Biquad filter coefficients & combined curve evaluation
 │       ├── EqModels.kt              # EqBand, FilterType, EqPreset, DefaultBands
 │       ├── PeqTextParser.kt         # AutoEQ / EqualizerAPO .txt & FiiO XML import/export
+│       ├── PresetBandHelper.kt      # Active-band detection, 10-band normalization & DAC adaptation
 │       └── CrcUtils.kt              # Checksum / CRC helpers for wire frames
 │
 ├── core-protocol/          # Pure Kotlin/JVM module (depends on :core-dsp)
 │   └── com.suprcharg3d.dongleCTRL.protocol
 │       ├── DacModels.kt             # ProtocolFamily, DacProfile, DacCapabilities, DacDeviceState
 │       ├── DacProtocol.kt           # Unified hardware driver interface
-│       ├── DacCatalog.kt            # Offline catalog matcher (VID/PID/name)
+│       ├── DacCatalog.kt            # Bundled device catalog matcher (VID/PID/name)
 │       ├── FiioSchemaCatalog.kt     # Dynamic schema-driven FiiO control descriptors
 │       ├── HidReportDescriptorParser.kt
 │       ├── ProtocolRegistry.kt
@@ -98,7 +101,7 @@ dongleCTRL
             ├── data/                # OfflinePrefsStore, OfflinePresetStore
             ├── usb/                 # UsbDacMonitor, AndroidUsbHidTransport, AndroidUsbSerialTransport
             ├── bt/                  # BluetoothDacMonitor, AndroidBtSppTransport, AndroidBtGattTransport
-            └── ui/                  # MainViewModel, screens (Devices, Dashboard, Equalizer, Settings), components, theme
+            └── ui/                  # MainViewModel, screens (Devices, Presets, Dashboard, Equalizer, Settings), components, theme
 ```
 
 ---
@@ -106,6 +109,7 @@ dongleCTRL
 ## Tech Stack & Requirements
 
 - **Application ID / Namespace:** `com.suprcharg3d.dongleCTRL`
+- **Version:** `1.1` (`versionCode = 3`)
 - **Minimum SDK:** Android 8.0 (API 26)
 - **Target / Compile SDK:** Android 16 (API 36)
 - **Language & Build:** Kotlin `2.2.10`, Android Gradle Plugin `9.1.1`, Java 17 toolchain
@@ -123,7 +127,7 @@ dongleCTRL
 ```bash
 ./gradlew :core-dsp:test :core-protocol:test
 ```
-Runs `DspTests` (biquad curve math & `PeqTextParser` round-trip tests) and `ProtocolTests` (protocol framing, FiiO PEQ codecs, CRC, and driver encoding/decoding).
+Runs `DspTests` (biquad math, `PeqTextParser` round-trip, `PresetBandHelper` 10-band/active-band mapping) and `ProtocolTests` (protocol framing, FiiO PEQ codecs, CRC, and driver encoding/decoding).
 
 ### Build Debug APK
 ```bash
@@ -148,7 +152,7 @@ An instrumentation test ([`LiveBtr17BluetoothTest.kt`](app/src/androidTest/kotli
 
 - **USB Host (`android.hardware.usb.host`, optional):** Enumerates and claims USB HID / CDC interfaces when a DAC dongle is plugged in over USB-C OTG.
 - **Bluetooth (`BLUETOOTH_CONNECT`, `BLUETOOTH_SCAN` with `neverForLocation`, legacy `BLUETOOTH` / `BLUETOOTH_ADMIN` <= API 30):** Detects paired/nearby wireless DACs and opens SPP or BLE GATT channels. No location permission is requested.
-- **Internet:** None. The app declares **no `INTERNET` permission**.
+- **Internet:** Not requested; all protocol handling and preset storage run locally.
 
 ---
 
