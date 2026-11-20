@@ -5,163 +5,165 @@
 <h1 align="center">dongleCTRL</h1>
 
 <p align="center">
-  <strong>Multi-protocol Android USB & Bluetooth DAC/AMP controller and Parametric EQ (PEQ) suite</strong><br/>
-  USB HID · USB Serial (CDC) · Bluetooth Classic SPP · Bluetooth LE GATT
+  <strong>Aplikasi pengontrol DAC/AMP USB & Bluetooth multiprotokol dan Parametric EQ (PEQ) untuk Android</strong><br/>
+  USB HID · USB Serial (CDC) · Bluetooth Classic SPP · Bluetooth LE GATT<br/><br/>
+  <a href="https://saweria.co/highliftdevices">Dukung / Donasi via Saweria (Indonesia)</a><br/>
+  <sub><a href="README-EN.md">English</a> · <strong>Bahasa Indonesia</strong></sub>
 </p>
 
 ---
 
-## Overview
+## Ringkasan
 
-**dongleCTRL** (`com.suprcharg3d.dongleCTRL`) is a native Android application built with Kotlin and Jetpack Compose (Material 3) for configuring USB-C DAC dongles, desktop USB DACs, and wireless Bluetooth DAC/AMPs directly from hardware protocols.
+**dongleCTRL** (`com.suprcharg3d.dongleCTRL`) adalah aplikasi Android native yang dibangun dengan Kotlin dan Jetpack Compose (Material 3) untuk mengonfigurasi dongle DAC USB-C, DAC USB desktop, dan DAC/AMP Bluetooth nirkabel langsung melalui protokol perangkat kerasnya.
 
-Instead of wrapping vendor web pages, dongleCTRL implements native binary protocols across **USB HID**, **USB Serial (CDC)**, **Bluetooth Classic SPP**, and **Bluetooth Low Energy (BLE GATT)** for 15 protocol families, running locally on-device with no accounts or network dependencies.
-
----
-
-## Features
-
-- **Multi-Protocol Device Discovery & Management (`DEVICES`)**
-  - Auto-detection across USB-C OTG (HID + CDC/Serial) and Bluetooth (Classic SPP + BLE GATT), backed by a bundled catalog of **498 device profiles**, **76 FiiO control schemas**, and **89 device illustrations**
-  - Manual protocol family override per USB device for generic or unlisted dongles
-- **Interactive Parametric EQ (`Equalizer`)**
-  - Real-time logarithmic frequency response curve (`20 Hz – 20 kHz`) with draggable handles and isolated per-band bell preview
-  - Responsive phone layout that prevents accidental vertical scrolling while dragging nodes on the graph
-  - Inline **Preamp / Global Gain** bar plus sliders, `-`/`+` steppers, and **tap-to-type exact numeric entry** for Preamp, Frequency, Gain, and Q Factor
-  - Per-band **Filter Type** (`Peak`, `Low Shelf`, `High Shelf`, `Low Pass`, `High Pass`, `Band Pass`, `All Pass` depending on hardware) and bypass switch
-  - Live RAM sync while dragging (`Instant Live PEQ Sync`) or manual **Apply RAM** + **Save to Flash** persistence
-  - Direct **Presets** picker and **Save to Presets** buttons from the PEQ screen
-- **10-Band Preset Manager & AutoEQ Import/Export (`PRESETS`)**
-  - Create, edit, and delete custom **10-band** presets stored locally on your phone using the full interactive PEQ curve editor
-  - Import **EqualizerAPO / AutoEQ / Squiglink `.txt`** and **FiiO XML** profiles (up to 64 parsed bands): presets with `<= 10` active bands auto-pad tail slots with flat `0.0 dB`, while imports with `> 10` active bands open a selection dialog (with *First 10* and *Strongest* quick picks)
-  - Export any saved preset to standard AutoEQ / EqualizerAPO `.txt` format
-  - **Smart Hardware Apply Flow**:
-    - Prompts you to pick a **Target DAC** when multiple USB/Bluetooth DACs are available
-    - Prompts you to pick a **Custom User Slot** on multi-slot DACs (e.g., FiiO `USER1`–`USER10`), and automatically switches to a writable slot before applying and saving to flash so factory presets are not overwritten
-    - Compares active (non-flat, enabled) bands against the DAC's band limit: auto-fits without prompting when active bands fit (including applying a 10-band preset with 5 active bands to a 5-band DAC), or opens a band-selection prompt when active bands exceed hardware limits
-- **Hardware & Schema-Driven Controls (`Dashboard`)**
-  - **DAC Digital Filters**, **Gain Level**, **L/R Channel Balance**, **Hardware EQ Toggle**, **Hardware Preset Slots & Custom Slot Renaming**, **Hardware Volume** (including 60/120-step scaling on supported devices)
-  - Schema-driven controls for FiiO USB & Bluetooth devices (scene modes, screen brightness/timeout, UAC mode, volume limits, RGB indicators, button gestures, battery/codec telemetry, Bluetooth renaming, hardware actions)
-- **Protocol Debug Log & Themes (`SETTINGS`)**
-  - Real-time raw packet trace viewer (`TX` / `RX` hex frames across USB HID, Serial, SPP, and BLE) with one-tap **Copy** and **Clear**
-  - `Follow System`, `Dark`, and `Light` Material 3 themes
+Alih-alih membungkus situs web pabrikan, dongleCTRL mengimplementasikan protokol biner native melalui **USB HID**, **USB Serial (CDC)**, **Bluetooth Classic SPP**, dan **Bluetooth Low Energy (BLE GATT)** untuk 15 keluarga protokol, berjalan secara lokal di perangkat tanpa akun ataupun ketergantungan jaringan.
 
 ---
 
-## Supported Protocols & Hardware
+## Fitur
 
-| Driver | `ProtocolFamily` Variants | Transport(s) | Typical Chipsets / Devices |
+- **Deteksi & Manajemen Perangkat Multiprotokol (`DEVICES`)**
+  - Deteksi otomatis melalui USB-C OTG (HID + CDC/Serial) dan Bluetooth (Classic SPP + BLE GATT), didukung katalog bawaan berisi **498 profil perangkat**, **76 skema kontrol FiiO**, dan **89 ilustrasi perangkat**
+  - Pengaturan manual keluarga protokol per perangkat USB untuk dongle generik atau perangkat yang belum terdaftar
+- **Parametric EQ Interaktif (`Equalizer`)**
+  - Kurva respons frekuensi logaritmik real-time (`20 Hz – 20 kHz`) dengan titik kontrol yang dapat digeser dan pratinjau kurva masing-masing band secara terpisah
+  - Tata letak responsif untuk ponsel guna mencegah guliran vertikal yang tidak disengaja saat menggeser titik di grafik
+  - Bilah **Preamp / Global Gain** langsung di halaman PEQ, lengkap dengan slider, tombol `-`/`+`, serta **ketuk-untuk-ketik nilai numerik presisi** untuk Preamp, Frekuensi, Gain, dan Q Factor
+  - Pilihan **Tipe Filter** per band (`Peak`, `Low Shelf`, `High Shelf`, `Low Pass`, `High Pass`, `Band Pass`, `All Pass` sesuai dukungan perangkat keras) serta sakelar bypass
+  - Sinkronisasi RAM langsung saat menggeser slider (`Instant Live PEQ Sync`) atau tombol manual **Apply RAM** + **Save to Flash**
+  - Tombol langsung **Presets** dan **Save to Presets** di layar edit PEQ
+- **Manajer Preset 10-Band & Impor/Ekspor AutoEQ (`PRESETS`)**
+  - Buat, ubah, dan hapus preset kustom **10-band** yang tersimpan lokal di ponsel menggunakan editor kurva PEQ interaktif penuh
+  - Impor file **EqualizerAPO / AutoEQ / Squiglink `.txt`** dan **FiiO XML** (hingga 64 band terbaca: `<= 10` band otomatis mengisi sisa slot dengan nilai datar `0.0 dB`, sedangkan impor dengan `> 10` band aktif akan menampilkan dialog pemilihan band dengan tombol cepat *First 10* dan *Strongest*)
+  - Ekspor preset apa pun kembali ke format standar AutoEQ / EqualizerAPO `.txt`
+  - **Alur Apply ke Perangkat Keras yang Aman**:
+    - Meminta memilih **Target DAC** jika terdapat lebih dari satu DAC USB atau Bluetooth yang terdeteksi
+    - Meminta memilih **Slot Kustom Pengguna** pada DAC yang memiliki beberapa slot (misalnya FiiO `USER1`–`USER10`), dan otomatis berpindah ke slot yang dapat ditulis sebelum menerapkan serta menyimpan ke flash agar preset bawaan pabrik tidak tertimpa
+    - Membaca jumlah band aktif (bukan 0 dB / tidak di-bypass) terhadap kapasitas DAC target: langsung menerapkan tanpa pop-up apabila jumlah band aktif muat di DAC (termasuk preset 10-band yang hanya memakai 5 band aktif diterapkan ke DAC 5-band), atau menampilkan dialog pemilihan band apabila melebihi batas band DAC
+- **Kontrol Perangkat Keras & Berbasis Skema (`Dashboard`)**
+  - **Filter Digital DAC**, **Level Gain**, **Keseimbangan Kanal L/R**, **Sakelar Hardware EQ**, **Slot Preset Hardware & Ubah Nama Slot Kustom**, serta **Volume Hardware** (termasuk skala 60/120 langkah pada perangkat yang mendukung)
+  - Kontrol dinamis berbasis skema untuk perangkat FiiO USB & Bluetooth (mode scene, kecerahan/timeout layar, mode UAC, batas volume, indikator RGB, gestur tombol, telemetri baterai/codec, ubah nama Bluetooth, dan aksi perangkat keras)
+- **Log Debug Protokol & Tema (`SETTINGS`)**
+  - Penampil jejak paket mentah real-time (frame heksadesimal `TX` / `RX` di USB HID, Serial, SPP, dan BLE) dengan tombol **Copy** dan **Clear**
+  - Tema Material 3 `Follow System`, `Dark`, dan `Light`
+
+---
+
+## Protokol & Perangkat Keras yang Didukung
+
+| Driver | Varian `ProtocolFamily` | Transpor | Chipset / Perangkat Umum |
 | :--- | :--- | :--- | :--- |
-| `CbProtocol` | `CB`, `CB1300D` | USB HID (`0x4B`) | EPZ, WalkPlay, Comtrue/TTGK CB DSP dongles & surround headsets |
-| `Cb1100AuProtocol` | `CB1100AU` | USB HID (`0xCB`) | Extended CB1100AU multi-filter PEQ dongles |
-| `KtProtocol` | `KT02H20`, `KT0231H` | USB HID | KTMicro KT02H20 (5-band) & KT0231H (6-band) dongles |
-| `Kt1213Protocol` | `KT1213` | USB HID (`0x57`) | KTMicro KT1213 / MT2000 15-band DSP devices |
-| `Cx31993Protocol` | `CX31993` | USB HID | Conexant CX31993 9-band DSP dongles |
-| `Gm55Protocol` | `GM55` | USB HID (`0x02`) | GM55 10-band DSP dongles |
-| `FiioHidProtocol` | `FIIO_HID`, `FIIO_V2`, `FIIO_GIGAWIT` | USB HID | FiiO / JadeAudio / Snowsky USB DACs (`KA*`, `QX*`, `JA11`, `K11`/`K13 R2R`, `BTR*` USB, `BT11`/GigaWit bridge) |
-| `FiioRestmomentProtocol` | `FIIO_RESTMOMENT` | USB Serial / CDC (`0xFC`/`0xFA`) | FiiO desktop units (`K15`, `K17`, `K19`) |
-| `FiioBtProtocol` | `FIIO_BT_GAIA`, `FIIO_BT_UNIVERSAL`, `FIIO_BT_BR13` | Bluetooth SPP & BLE GATT | FiiO / Snowsky wireless DAC/AMPs (`BTR*`, `BR13`, `Q5`, universal FiiO BT devices) |
+| `CbProtocol` | `CB`, `CB1300D` | USB HID (`0x4B`) | Dongle DSP & headset surround EPZ, WalkPlay, Comtrue/TTGK CB |
+| `Cb1100AuProtocol` | `CB1100AU` | USB HID (`0xCB`) | Dongle PEQ multi-filter CB1100AU lanjutan |
+| `KtProtocol` | `KT02H20`, `KT0231H` | USB HID | Dongle KTMicro KT02H20 (5-band) & KT0231H (6-band) |
+| `Kt1213Protocol` | `KT1213` | USB HID (`0x57`) | Perangkat DSP 15-band KTMicro KT1213 / MT2000 |
+| `Cx31993Protocol` | `CX31993` | USB HID | Dongle DSP 9-band Conexant CX31993 |
+| `Gm55Protocol` | `GM55` | USB HID (`0x02`) | Dongle DSP 10-band GM55 |
+| `FiioHidProtocol` | `FIIO_HID`, `FIIO_V2`, `FIIO_GIGAWIT` | USB HID | DAC USB FiiO / JadeAudio / Snowsky (`KA*`, `QX*`, `JA11`, `K11`/`K13 R2R`, `BTR*` USB, `BT11`/bridge GigaWit) |
+| `FiioRestmomentProtocol` | `FIIO_RESTMOMENT` | USB Serial / CDC (`0xFC`/`0xFA`) | Unit desktop FiiO (`K15`, `K17`, `K19`) |
+| `FiioBtProtocol` | `FIIO_BT_GAIA`, `FIIO_BT_UNIVERSAL`, `FIIO_BT_BR13` | Bluetooth SPP & BLE GATT | DAC/AMP nirkabel FiiO / Snowsky (`BTR*`, `BR13`, `Q5`, perangkat BT universal FiiO) |
 
-> **USB OTG Auto-Detection:** USB vendor filters in `usb_device_filter.xml` recognize common vendor IDs (`0x3302`, `0x2972`, `0x5AC1`, `0x1024`, `0x31B2`, `0x0A12`, `0x0D8C`, and more), alongside generic fallback detection for USB Audio + HID/CDC devices.
+> **Deteksi Otomatis USB OTG:** Filter vendor USB pada `usb_device_filter.xml` mengenali ID vendor umum (`0x3302`, `0x2972`, `0x5AC1`, `0x1024`, `0x31B2`, `0x0A12`, `0x0D8C`, dan lainnya), disertai deteksi cadangan generik untuk perangkat USB Audio + HID/CDC.
 
 ---
 
-## Architecture
+## Arsitektur
 
-The project is split into three Gradle modules to keep DSP math and hardware protocol codecs independent of Android UI code:
+Proyek ini dibagi menjadi tiga modul Gradle agar perhitungan DSP dan codec protokol perangkat keras terpisah dari kode UI Android:
 
 ```text
 dongleCTRL
-├── core-dsp/               # Pure Kotlin/JVM module
+├── core-dsp/               # Modul Kotlin/JVM murni
 │   └── com.suprcharg3d.dongleCTRL.dsp
-│       ├── BiquadCalculator.kt      # Biquad filter coefficients & combined curve evaluation
+│       ├── BiquadCalculator.kt      # Koefisien filter biquad & evaluasi kurva gabungan
 │       ├── EqModels.kt              # EqBand, FilterType, EqPreset, DefaultBands
-│       ├── PeqTextParser.kt         # AutoEQ / EqualizerAPO .txt & FiiO XML import/export
-│       ├── PresetBandHelper.kt      # Active-band detection, 10-band normalization & DAC adaptation
-│       └── CrcUtils.kt              # Checksum / CRC helpers for wire frames
+│       ├── PeqTextParser.kt         # Impor/ekspor AutoEQ / EqualizerAPO .txt & FiiO XML
+│       ├── PresetBandHelper.kt      # Deteksi band aktif, normalisasi 10-band & adaptasi ke DAC
+│       └── CrcUtils.kt              # Helper checksum / CRC untuk frame protokol
 │
-├── core-protocol/          # Pure Kotlin/JVM module (depends on :core-dsp)
+├── core-protocol/          # Modul Kotlin/JVM murni (bergantung pada :core-dsp)
 │   └── com.suprcharg3d.dongleCTRL.protocol
 │       ├── DacModels.kt             # ProtocolFamily, DacProfile, DacCapabilities, DacDeviceState
-│       ├── DacProtocol.kt           # Unified hardware driver interface
-│       ├── DacCatalog.kt            # Bundled device catalog matcher (VID/PID/name)
-│       ├── FiioSchemaCatalog.kt     # Dynamic schema-driven FiiO control descriptors
+│       ├── DacProtocol.kt           # Antarmuka driver perangkat keras terpadu
+│       ├── DacCatalog.kt            # Pencocok katalog perangkat bawaan (VID/PID/nama)
+│       ├── FiioSchemaCatalog.kt     # Deskriptor kontrol FiiO dinamis berbasis skema
 │       ├── HidReportDescriptorParser.kt
 │       ├── ProtocolRegistry.kt
-│       ├── Transport.kt             # DacTransport abstraction (USB HID, Serial, BT SPP, BLE GATT)
-│       └── drivers/                 # Protocol codecs & hardware drivers (CB, KT, CX, GM55, FiiO)
+│       ├── Transport.kt             # Abstraksi DacTransport (USB HID, Serial, BT SPP, BLE GATT)
+│       └── drivers/                 # Codec protokol & driver perangkat keras (CB, KT, CX, GM55, FiiO)
 │
-└── app/                    # Android application (Jetpack Compose Material 3)
+└── app/                    # Aplikasi Android (Jetpack Compose Material 3)
     └── src/main/
         ├── assets/                  # dac_catalog.json, fiio_schemas.json, dac_images/
-        ├── res/                     # Adaptive icon, themes, USB device filter XML
+        ├── res/                     # Ikon adaptif, tema, XML filter perangkat USB
         └── kotlin/com/suprcharg3d/dongleCTRL/
             ├── DongleCtrlApp.kt
             ├── MainActivity.kt
             ├── data/                # OfflinePrefsStore, OfflinePresetStore
             ├── usb/                 # UsbDacMonitor, AndroidUsbHidTransport, AndroidUsbSerialTransport
             ├── bt/                  # BluetoothDacMonitor, AndroidBtSppTransport, AndroidBtGattTransport
-            └── ui/                  # MainViewModel, screens (Devices, Presets, Dashboard, Equalizer, Settings), components, theme
+            └── ui/                  # MainViewModel, layar (Devices, Presets, Dashboard, Equalizer, Settings), komponen, tema
 ```
 
 ---
 
-## Tech Stack & Requirements
+## Teknologi & Persyaratan
 
 - **Application ID / Namespace:** `com.suprcharg3d.dongleCTRL`
-- **Version:** `1.1` (`versionCode = 3`)
-- **Minimum SDK:** Android 8.0 (API 26)
+- **Versi:** `1.1` (`versionCode = 3`)
+- **SDK Minimum:** Android 8.0 (API 26)
 - **Target / Compile SDK:** Android 16 (API 36)
-- **Language & Build:** Kotlin `2.2.10`, Android Gradle Plugin `9.1.1`, Java 17 toolchain
+- **Bahasa & Build:** Kotlin `2.2.10`, Android Gradle Plugin `9.1.1`, toolchain Java 17
 - **UI:** Jetpack Compose (`compose-bom` `2025.05.00`) + Material 3 + Material Icons Extended
 
 ---
 
-## Building & Testing
+## Membangun & Menguji
 
-### Prerequisites
-- Android Studio (Meerkat / Narwhal or newer) or JDK 17 + Android SDK (API 36 platform installed)
-- Configure `sdk.dir` in `local.properties` (excluded from Git via `.gitignore`)
+### Prasyarat
+- Android Studio (Meerkat / Narwhal atau lebih baru) atau JDK 17 + Android SDK (platform API 36 terpasang)
+- Konfigurasikan `sdk.dir` di `local.properties` (dikecualikan dari Git melalui `.gitignore`)
 
-### Run Unit Tests (`:core-dsp` & `:core-protocol`)
+### Menjalankan Unit Test (`:core-dsp` & `:core-protocol`)
 ```bash
 ./gradlew :core-dsp:test :core-protocol:test
 ```
-Runs `DspTests` (biquad math, `PeqTextParser` round-trip, `PresetBandHelper` 10-band/active-band mapping) and `ProtocolTests` (protocol framing, FiiO PEQ codecs, CRC, and driver encoding/decoding).
+Menjalankan `DspTests` (matematika biquad, round-trip `PeqTextParser`, pemetaan 10-band & band aktif `PresetBandHelper`) dan `ProtocolTests` (framing protokol, codec PEQ FiiO, CRC, dan encoding/decoding driver).
 
-### Build Debug APK
+### Membangun APK Debug
 ```bash
 ./gradlew :app:assembleDebug
 ```
-Output APK: `app/build/outputs/apk/debug/app-debug.apk`
+Lokasi output APK: `app/build/outputs/apk/debug/app-debug.apk`
 
-### Install via ADB
+### Memasang via ADB
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-### Live Bluetooth Instrumentation Smoke Test (Optional)
-An instrumentation test ([`LiveBtr17BluetoothTest.kt`](app/src/androidTest/kotlin/com/suprcharg3d/dongleCTRL/LiveBtr17BluetoothTest.kt)) is included for verifying live FiiO BTR17 Bluetooth read/write/restore behavior on a connected physical phone (automatically skips if no audio-connected BTR17 is paired):
+### Pengujian Instrumentasi Bluetooth Langsung (Opsional)
+Sebuah pengujian instrumentasi ([`LiveBtr17BluetoothTest.kt`](app/src/androidTest/kotlin/com/suprcharg3d/dongleCTRL/LiveBtr17BluetoothTest.kt)) disertakan untuk memverifikasi baca/tulis/pulihkan Bluetooth FiiO BTR17 secara langsung di ponsel fisik yang terhubung (otomatis dilewati jika tidak ada BTR17 yang tersambung audio):
 ```bash
 ./gradlew :app:connectedDebugAndroidTest
 ```
 
 ---
 
-## Permissions
+## Izin Aplikasi
 
-- **USB Host (`android.hardware.usb.host`, optional):** Enumerates and claims USB HID / CDC interfaces when a DAC dongle is plugged in over USB-C OTG.
-- **Bluetooth (`BLUETOOTH_CONNECT`, `BLUETOOTH_SCAN` with `neverForLocation`, legacy `BLUETOOTH` / `BLUETOOTH_ADMIN` <= API 30):** Detects paired/nearby wireless DACs and opens SPP or BLE GATT channels. No location permission is requested.
-- **Internet:** Not requested; all protocol handling and preset storage run locally.
+- **USB Host (`android.hardware.usb.host`, opsional):** Mendeteksi dan mengakses antarmuka USB HID / CDC saat dongle DAC dicolokkan melalui USB-C OTG.
+- **Bluetooth (`BLUETOOTH_CONNECT`, `BLUETOOTH_SCAN` dengan `neverForLocation`, serta `BLUETOOTH` / `BLUETOOTH_ADMIN` pada Android <= API 30):** Mendeteksi DAC nirkabel yang terpasang/di sekitar dan membuka saluran SPP atau BLE GATT. Aplikasi tidak meminta izin lokasi.
+- **Internet:** Tidak diminta; seluruh penanganan protokol dan penyimpanan preset dijalankan secara lokal.
 
 ---
 
-## Notes & Disclaimer
+## Catatan & Penyangkalan (Disclaimer)
 
-> **USE AT YOUR OWN RISK — NO WARRANTY OR LIABILITY**
+> **GUNAKAN DENGAN RISIKO ANDA SENDIRI — TANPA GARANSI ATAU PERTANGGUNGJAWABAN**
 >
-> This software communicates directly with external audio hardware over low-level USB HID, USB Serial, and Bluetooth protocols and writes DSP/EQ configuration registers and flash memory. **By using dongleCTRL, you assume all risk.** The authors and contributors are **not responsible or liable for any hardware damage, bricked devices, corrupted firmware/flash, hearing loss, or speaker/IEM damage** resulting from the use or misuse of this application.
+> Perangkat lunak ini berkomunikasi langsung dengan perangkat keras audio eksternal melalui protokol tingkat rendah USB HID, USB Serial, dan Bluetooth, serta menulis register konfigurasi DSP/EQ dan memori flash perangkat. **Dengan menggunakan dongleCTRL, Anda menanggung sepenuhnya segala risiko.** Penulis dan kontributor **tidak bertanggung jawab atas segala kerusakan perangkat keras, perangkat yang mati total (brick), kerusakan firmware/flash, gangguan pendengaran, maupun kerusakan speaker/IEM** yang timbul akibat penggunaan atau penyalahgunaan aplikasi ini.
 
-- Protocol support is implemented via clean-room hardware analysis and testing across supported DAC families. Vendor firmware behavior varies across models and firmware revisions; double-check gain limits, preamp headroom, and custom EQ slot selections before flashing or playing at high volume on sensitive IEMs.
-- Not affiliated with, endorsed by, or supported by EPZ, WalkPlay, FiiO, JadeAudio, Snowsky, KTMicro, Conexant, or any other manufacturer. All product names and trademarks belong to their respective owners.
-- Prebuilt APK binaries are provided on the [GitHub Releases](https://github.com/suprcharg3d/dongleCTRL/releases) page.
+- Dukungan protokol diimplementasikan melalui analisis clean-room dan pengujian pada berbagai keluarga DAC yang didukung. Perilaku firmware pabrikan dapat berbeda antarmodel dan revisi firmware; selalu periksa kembali batas gain, headroom preamp, serta slot EQ kustom yang dipilih sebelum menyimpan ke flash atau memutar audio pada volume tinggi dengan IEM yang sensitif.
+- Aplikasi ini tidak berafiliasi dengan, tidak didukung oleh, dan tidak disahkan oleh EPZ, WalkPlay, FiiO, JadeAudio, Snowsky, KTMicro, Conexant, maupun produsen lainnya. Seluruh nama produk dan merek dagang adalah milik masing-masing pemiliknya.
+- File APK siap pasang tersedia di halaman [GitHub Releases](https://github.com/suprcharg3d/dongleCTRL/releases).
