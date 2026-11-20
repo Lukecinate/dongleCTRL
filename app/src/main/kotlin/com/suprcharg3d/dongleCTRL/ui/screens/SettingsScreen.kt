@@ -49,6 +49,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.suprcharg3d.dongleCTRL.data.AppPrefs
 import com.suprcharg3d.dongleCTRL.data.ThemeMode
+import com.suprcharg3d.dongleCTRL.ui.components.MainTabHeader
 import com.suprcharg3d.dongleCTRL.ui.components.SettingActionRow
 import com.suprcharg3d.dongleCTRL.ui.components.SettingSwitchRow
 import com.suprcharg3d.dongleCTRL.ui.components.SettingsSectionCard
@@ -77,12 +78,7 @@ fun SettingsScreen(
             .padding(horizontal = 16.dp)
             .padding(bottom = 28.dp)
     ) {
-        Text(
-            text = "Settings",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(top = 18.dp, bottom = 16.dp)
-        )
+        MainTabHeader(title = "SETTINGS")
 
         SettingsSectionCard(title = "Preferences") {
             SettingActionRow(
@@ -120,7 +116,7 @@ fun SettingsScreen(
             SettingActionRow(
                 icon = Icons.Rounded.Info,
                 title = "About dongleCTRL",
-                valueText = "v1.0.1",
+                valueText = "v1.1",
                 showDivider = false,
                 onClick = { showAboutDialog = true }
             )

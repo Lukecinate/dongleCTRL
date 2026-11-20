@@ -81,4 +81,67 @@ class DspTests {
         assertEquals(parsed.bands.size, reparsed.bands.size)
         assertEquals(3200, reparsed.bands[1].frequencyHz)
     }
+
+    @Test
+    fun `normalizing 5-band preset pads remaining slots up to 10 with 0 dB`() {
+        val fiveBands = List(5) { i ->
+            EqBand(index = i, frequencyHz = 100 * (i + 1), gainDb = 2.5, q = 1.4, filterType = FilterType.PEAK)
+        }
+        val res = PresetBandHelper.resolveStandardTenBands(fiveBands)
+        assertTrue(res is PresetBandHelper.BandResolution.Ready)
+        val ready = res as PresetBandHelper.BandResolution.Ready
+        assertEquals(10, ready.bands.size)
+        assertEquals(5, PresetBandHelper.activeBands(ready.bands).size)
+        for (i in 5 until 10) {
+            assertEquals(0.0, ready.bands[i].gainDb, 1e-9)
+        }
+    }
+
+    @Test
+    fun `importing 20 active bands triggers selection up to 10 and saves selected`() {
+        val twentyBands = List(20) { i ->
+            EqBand(index = i, frequencyHz = 50 * (i + 1), gainDb = (i + 1) * 0.3, q = 1.41, filterType = FilterType.PEAK)
+        }
+        val initial = PresetBandHelper.resolveStandardTenBands(twentyBands)
+        assertTrue(initial is PresetBandHelper.BandResolution.NeedsSelection)
+        val prompt = initial as PresetBandHelper.BandResolution.NeedsSelection
+        assertEquals(20, prompt.candidateBands.size)
+        assertEquals(10, prompt.maxSelectable)
+
+        val picked = listOf(0, 2, 4, 6, 8, 10, 12, 14, 16, 18)
+        val finalRes = PresetBandHelper.resolveStandardTenBands(twentyBands, picked)
+        assertTrue(finalRes is PresetBandHelper.BandResolution.Ready)
+        val saved = (finalRes as PresetBandHelper.BandResolution.Ready).bands
+        assertEquals(10, saved.size)
+        assertEquals(50, saved[0].frequencyHz)
+        assertEquals(150, saved[1].frequencyHz)
+    }
+
+    @Test
+    fun `10-band preset with only 5 active bands applies cleanly to 5-band DAC without popup`() {
+        val tenWithFiveActive = DefaultBands.flatBands(10).mapIndexed { idx, band ->
+            if (idx in listOf(1, 3, 5, 7, 9)) band.copy(gainDb = -2.5) else band
+        }
+        val res = PresetBandHelper.resolveBandsForTarget(tenWithFiveActive, targetMaxBands = 5)
+        assertTrue("Expected auto-fit Ready when only 5 active bands exist", res is PresetBandHelper.BandResolution.Ready)
+        val adapted = (res as PresetBandHelper.BandResolution.Ready).bands
+        assertEquals(5, adapted.size)
+        assertTrue(adapted.all { it.gainDb == -2.5 })
+    }
+
+    @Test
+    fun `10-band preset with 8 active bands requires selection for 5-band DAC`() {
+        val tenWithEightActive = DefaultBands.flatBands(10).mapIndexed { idx, band ->
+            if (idx < 8) band.copy(gainDb = 1.5) else band
+        }
+        val res = PresetBandHelper.resolveBandsForTarget(tenWithEightActive, targetMaxBands = 5)
+        assertTrue(res is PresetBandHelper.BandResolution.NeedsSelection)
+        val sel = res as PresetBandHelper.BandResolution.NeedsSelection
+        assertEquals(8, sel.candidateBands.size)
+        assertEquals(5, sel.maxSelectable)
+
+        val resolved = PresetBandHelper.resolveBandsForTarget(tenWithEightActive, 5, listOf(0, 2, 4, 6, 7))
+        assertTrue(resolved is PresetBandHelper.BandResolution.Ready)
+        assertEquals(5, (resolved as PresetBandHelper.BandResolution.Ready).bands.size)
+    }
 }

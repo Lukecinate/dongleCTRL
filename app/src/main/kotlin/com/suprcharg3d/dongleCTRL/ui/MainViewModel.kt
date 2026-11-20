@@ -13,12 +13,14 @@ import com.suprcharg3d.dongleCTRL.dsp.EqBand
 import com.suprcharg3d.dongleCTRL.dsp.EqPreset
 import com.suprcharg3d.dongleCTRL.dsp.FilterType
 import com.suprcharg3d.dongleCTRL.dsp.PeqTextParser
+import com.suprcharg3d.dongleCTRL.dsp.PresetBandHelper
 import com.suprcharg3d.dongleCTRL.protocol.DacCapabilities
 import com.suprcharg3d.dongleCTRL.protocol.DacControlValue
 import com.suprcharg3d.dongleCTRL.protocol.DacDeviceState
 import com.suprcharg3d.dongleCTRL.protocol.DacProfile
 import com.suprcharg3d.dongleCTRL.protocol.DacProtocol
 import com.suprcharg3d.dongleCTRL.protocol.DacTransport
+import com.suprcharg3d.dongleCTRL.protocol.NamedOption
 import com.suprcharg3d.dongleCTRL.protocol.ProtocolFamily
 import com.suprcharg3d.dongleCTRL.protocol.ProtocolRegistry
 import com.suprcharg3d.dongleCTRL.protocol.TransportType
@@ -35,9 +37,94 @@ import kotlinx.coroutines.sync.withLock
 
 enum class AppScreen {
     DEVICES,
+    PRESETS,
     DASHBOARD,
     EQUALIZER,
     SETTINGS
+}
+
+sealed interface TargetDacOption {
+    val deviceKey: String
+    val title: String
+    val subtitle: String
+    val isActiveSession: Boolean
+
+    data class ActiveSessionOnly(
+        override val deviceKey: String,
+        override val title: String,
+        override val subtitle: String
+    ) : TargetDacOption {
+        override val isActiveSession: Boolean = true
+    }
+
+    data class UsbTarget(
+        val entry: DetectedUsbDac,
+        override val isActiveSession: Boolean
+    ) : TargetDacOption {
+        override val deviceKey: String = entry.device.deviceName
+        override val title: String = entry.effectiveProfile.model
+        override val subtitle: String = buildString {
+            append("USB · ")
+            append(entry.effectiveProfile.protocol.displayName)
+            if (isActiveSession) append(" · Connected")
+        }
+    }
+
+    data class BtTarget(
+        val entry: DetectedBluetoothDac,
+        override val isActiveSession: Boolean
+    ) : TargetDacOption {
+        override val deviceKey: String = entry.descriptor.deviceKey
+        override val title: String = entry.displayName
+        override val subtitle: String = buildString {
+            append("Bluetooth · ")
+            append(entry.matchedProfile.protocol.displayName)
+            if (isActiveSession) append(" · Connected")
+        }
+    }
+}
+
+data class PendingTargetDacSelection(
+    val preset: EqPreset,
+    val options: List<TargetDacOption>
+)
+
+data class PendingSlotSelection(
+    val preset: EqPreset,
+    val dacName: String,
+    val slots: List<NamedOption>,
+    val customNames: Map<Int, String>,
+    val currentPresetId: Int
+)
+
+sealed interface PendingBandSelection {
+    val candidateBands: List<EqBand>
+    val maxSelectable: Int
+
+    data class ApplyPresetToDac(
+        val preset: EqPreset,
+        val targetSlotId: Int?,
+        val targetDacBands: Int,
+        val dacName: String,
+        override val candidateBands: List<EqBand>,
+        override val maxSelectable: Int
+    ) : PendingBandSelection
+
+    data class SaveImportedPreset(
+        val name: String,
+        val preampDb: Double,
+        val sourceBands: List<EqBand>,
+        override val candidateBands: List<EqBand>,
+        override val maxSelectable: Int
+    ) : PendingBandSelection
+
+    data class SaveDacToPreset(
+        val name: String,
+        val preampDb: Double,
+        val sourceBands: List<EqBand>,
+        override val candidateBands: List<EqBand>,
+        override val maxSelectable: Int
+    ) : PendingBandSelection
 }
 
 data class ActiveDacSession(
@@ -62,6 +149,9 @@ data class MainUiState(
     val prefs: AppPrefs = AppPrefs(),
     val catalogProfiles: List<DacProfile> = emptyList(),
     val usbLogs: List<String> = emptyList(),
+    val pendingTargetDacSelection: PendingTargetDacSelection? = null,
+    val pendingSlotSelection: PendingSlotSelection? = null,
+    val pendingBandSelection: PendingBandSelection? = null,
     val toastMessage: String? = null
 )
 
@@ -245,73 +335,85 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch {
-            bandWriteDebounceJob?.cancel()
-            activeTransport?.close()
-            activeTransport = null
-
-            val profile = entry.matchedProfile
-            val driver = ProtocolRegistry.create(profile.protocol)
-            val caps = driver.buildCapabilities(profile)
-
-            val placeholderState = DacDeviceState(
-                bands = DefaultBands.flatBands(caps.maxBands),
-                maxVolume = caps.maxVolume
-            )
-
-            _uiState.update {
-                it.copy(
-                    activeSession = ActiveDacSession(
-                        deviceKey = entry.descriptor.deviceKey,
-                        profile = profile,
-                        capabilities = caps,
-                        state = placeholderState,
-                        isBusy = true,
-                        statusBanner = "Connecting over Bluetooth..."
-                    ),
-                    selectedBandIndex = 0,
-                    currentScreen = if (navigateToDashboard) AppScreen.DASHBOARD else it.currentScreen
-                )
-            }
-
-            val transport = btMonitor.openTransport(entry)
-            if (transport == null) {
-                _uiState.update { it.copy(activeSession = null, currentScreen = AppScreen.DEVICES) }
-                showToast("Unable to open Bluetooth link for ${entry.displayName}")
-                return@launch
-            }
-
-            activeTransport = transport
-            activeDriver = driver
-            val runtimeProfile = profile.copy(transport = transport.transportType)
-
-            val synced = runCatching {
-                driver.readDeviceState(transport, runtimeProfile)
-            }.getOrElse { err ->
-                usbMonitor.log("BT initial sync fallback: ${err.message}")
-                placeholderState.copy(diagnosticNote = "BT Connected (${err.message ?: "sync partial"})")
-            }
-
-            if (caps.bypassPresetId == null || synced.activePresetId != caps.bypassPresetId) {
-                lastNonBypassPresetId = synced.activePresetId
-            }
-
-            val banner = buildSessionBanner(runtimeProfile, transport.transportType, synced)
-            _uiState.update { state ->
-                val cur = state.activeSession ?: return@update state
-                if (cur.deviceKey != entry.descriptor.deviceKey) return@update state
-                val finalBands = if (synced.bands.isEmpty()) DefaultBands.flatBands(caps.maxBands) else synced.bands
-                state.copy(
-                    activeSession = cur.copy(
-                        profile = runtimeProfile,
-                        capabilities = caps.copy(maxBands = finalBands.size.coerceAtLeast(caps.maxBands)),
-                        state = synced.copy(bands = finalBands),
-                        isBusy = false,
-                        statusBanner = banner
-                    )
-                )
-            }
-            startLiveSyncObservers(entry.descriptor.deviceKey, runtimeProfile, transport, driver)
+            openBtConnection(entry, navigateToDashboard)
         }
+    }
+
+    private suspend fun openBtConnection(
+        entry: DetectedBluetoothDac,
+        navigateToDashboard: Boolean
+    ): Boolean {
+        if (!btMonitor.hasRequiredPermissions()) {
+            showToast("Grant Bluetooth permission to connect ${entry.displayName}")
+            return false
+        }
+        bandWriteDebounceJob?.cancel()
+        activeTransport?.close()
+        activeTransport = null
+
+        val profile = entry.matchedProfile
+        val driver = ProtocolRegistry.create(profile.protocol)
+        val caps = driver.buildCapabilities(profile)
+
+        val placeholderState = DacDeviceState(
+            bands = DefaultBands.flatBands(caps.maxBands),
+            maxVolume = caps.maxVolume
+        )
+
+        _uiState.update {
+            it.copy(
+                activeSession = ActiveDacSession(
+                    deviceKey = entry.descriptor.deviceKey,
+                    profile = profile,
+                    capabilities = caps,
+                    state = placeholderState,
+                    isBusy = true,
+                    statusBanner = "Connecting over Bluetooth..."
+                ),
+                selectedBandIndex = 0,
+                currentScreen = if (navigateToDashboard) AppScreen.DASHBOARD else it.currentScreen
+            )
+        }
+
+        val transport = btMonitor.openTransport(entry)
+        if (transport == null) {
+            _uiState.update { it.copy(activeSession = null, currentScreen = if (navigateToDashboard) AppScreen.DEVICES else it.currentScreen) }
+            showToast("Unable to open Bluetooth link for ${entry.displayName}")
+            return false
+        }
+
+        activeTransport = transport
+        activeDriver = driver
+        val runtimeProfile = profile.copy(transport = transport.transportType)
+
+        val synced = runCatching {
+            driver.readDeviceState(transport, runtimeProfile)
+        }.getOrElse { err ->
+            usbMonitor.log("BT initial sync fallback: ${err.message}")
+            placeholderState.copy(diagnosticNote = "BT Connected (${err.message ?: "sync partial"})")
+        }
+
+        if (caps.bypassPresetId == null || synced.activePresetId != caps.bypassPresetId) {
+            lastNonBypassPresetId = synced.activePresetId
+        }
+
+        val banner = buildSessionBanner(runtimeProfile, transport.transportType, synced)
+        _uiState.update { state ->
+            val cur = state.activeSession ?: return@update state
+            if (cur.deviceKey != entry.descriptor.deviceKey) return@update state
+            val finalBands = if (synced.bands.isEmpty()) DefaultBands.flatBands(caps.maxBands) else synced.bands
+            state.copy(
+                activeSession = cur.copy(
+                    profile = runtimeProfile,
+                    capabilities = caps.copy(maxBands = finalBands.size.coerceAtLeast(caps.maxBands)),
+                    state = synced.copy(bands = finalBands),
+                    isBusy = false,
+                    statusBanner = banner
+                )
+            )
+        }
+        startLiveSyncObservers(entry.descriptor.deviceKey, runtimeProfile, transport, driver)
+        return true
     }
 
     fun connectToUsbDevice(entry: DetectedUsbDac, navigateToDashboard: Boolean = true) {
@@ -321,69 +423,82 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         viewModelScope.launch {
-            activeTransport?.close()
-            activeTransport = null
-
-            val profile = entry.effectiveProfile
-            val driver = ProtocolRegistry.create(profile.protocol)
-            val caps = driver.buildCapabilities(profile)
-
-            val transport = usbMonitor.openTransport(entry)
-            if (transport == null) {
-                showToast("Unable to open USB interface for ${profile.model}")
-                return@launch
-            }
-
-            activeTransport = transport
-            activeDriver = driver
-
-            val placeholderState = DacDeviceState(
-                bands = DefaultBands.flatBands(caps.maxBands),
-                maxVolume = caps.maxVolume
-            )
-
-            _uiState.update {
-                it.copy(
-                    activeSession = ActiveDacSession(
-                        deviceKey = entry.device.deviceName,
-                        profile = profile,
-                        capabilities = caps,
-                        state = placeholderState,
-                        isBusy = true,
-                        statusBanner = "Syncing parameters..."
-                    ),
-                    selectedBandIndex = 0,
-                    currentScreen = if (navigateToDashboard) AppScreen.DASHBOARD else it.currentScreen
-                )
-            }
-
-            val synced = runCatching {
-                driver.readDeviceState(transport, profile)
-            }.getOrElse { err ->
-                usbMonitor.log("Initial sync fallback: ${err.message}")
-                placeholderState.copy(diagnosticNote = "Connected (default view)")
-            }
-
-            if (caps.bypassPresetId == null || synced.activePresetId != caps.bypassPresetId) {
-                lastNonBypassPresetId = synced.activePresetId
-            }
-
-            val banner = buildSessionBanner(profile, transport.transportType, synced)
-            _uiState.update { state ->
-                val cur = state.activeSession ?: return@update state
-                if (cur.deviceKey != entry.device.deviceName) return@update state
-                val finalBands = if (synced.bands.isEmpty()) DefaultBands.flatBands(caps.maxBands) else synced.bands
-                state.copy(
-                    activeSession = cur.copy(
-                        capabilities = caps.copy(maxBands = finalBands.size.coerceAtLeast(caps.maxBands)),
-                        state = synced.copy(bands = finalBands),
-                        isBusy = false,
-                        statusBanner = banner
-                    )
-                )
-            }
-            startLiveSyncObservers(entry.device.deviceName, profile, transport, driver)
+            openUsbConnection(entry, navigateToDashboard)
         }
+    }
+
+    private suspend fun openUsbConnection(
+        entry: DetectedUsbDac,
+        navigateToDashboard: Boolean
+    ): Boolean {
+        if (!entry.hasPermission) {
+            usbMonitor.requestPermission(entry.device)
+            return false
+        }
+        bandWriteDebounceJob?.cancel()
+        activeTransport?.close()
+        activeTransport = null
+
+        val profile = entry.effectiveProfile
+        val driver = ProtocolRegistry.create(profile.protocol)
+        val caps = driver.buildCapabilities(profile)
+
+        val transport = usbMonitor.openTransport(entry)
+        if (transport == null) {
+            showToast("Unable to open USB interface for ${profile.model}")
+            return false
+        }
+
+        activeTransport = transport
+        activeDriver = driver
+
+        val placeholderState = DacDeviceState(
+            bands = DefaultBands.flatBands(caps.maxBands),
+            maxVolume = caps.maxVolume
+        )
+
+        _uiState.update {
+            it.copy(
+                activeSession = ActiveDacSession(
+                    deviceKey = entry.device.deviceName,
+                    profile = profile,
+                    capabilities = caps,
+                    state = placeholderState,
+                    isBusy = true,
+                    statusBanner = "Syncing parameters..."
+                ),
+                selectedBandIndex = 0,
+                currentScreen = if (navigateToDashboard) AppScreen.DASHBOARD else it.currentScreen
+            )
+        }
+
+        val synced = runCatching {
+            driver.readDeviceState(transport, profile)
+        }.getOrElse { err ->
+            usbMonitor.log("Initial sync fallback: ${err.message}")
+            placeholderState.copy(diagnosticNote = "Connected (default view)")
+        }
+
+        if (caps.bypassPresetId == null || synced.activePresetId != caps.bypassPresetId) {
+            lastNonBypassPresetId = synced.activePresetId
+        }
+
+        val banner = buildSessionBanner(profile, transport.transportType, synced)
+        _uiState.update { state ->
+            val cur = state.activeSession ?: return@update state
+            if (cur.deviceKey != entry.device.deviceName) return@update state
+            val finalBands = if (synced.bands.isEmpty()) DefaultBands.flatBands(caps.maxBands) else synced.bands
+            state.copy(
+                activeSession = cur.copy(
+                    capabilities = caps.copy(maxBands = finalBands.size.coerceAtLeast(caps.maxBands)),
+                    state = synced.copy(bands = finalBands),
+                    isBusy = false,
+                    statusBanner = banner
+                )
+            )
+        }
+        startLiveSyncObservers(entry.device.deviceName, profile, transport, driver)
+        return true
     }
 
     fun disconnectSession() {
@@ -663,69 +778,428 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun applyPreset(preset: EqPreset) {
-        val session = _uiState.value.activeSession ?: return
-        val targetCount = session.state.bands.size.coerceAtLeast(session.capabilities.maxBands)
-        val adapted = List(targetCount) { idx ->
-            val src = preset.bands.getOrNull(idx)
-            if (src != null) {
-                src.copy(
-                    index = idx,
-                    gainDb = src.gainDb.coerceIn(session.capabilities.minGainDb, session.capabilities.maxGainDb),
-                    q = src.q.coerceIn(session.capabilities.minQ, session.capabilities.maxQ),
-                    filterType = if (src.filterType in session.capabilities.supportedFilters) src.filterType else FilterType.PEAK
+    private fun availableTargetDacs(): List<TargetDacOption> {
+        val state = _uiState.value
+        val activeKey = state.activeSession?.deviceKey
+        val list = mutableListOf<TargetDacOption>()
+
+        state.detectedDevices
+            .filter { it.isSupportedCandidate || it.device.deviceName == activeKey }
+            .forEach { usb ->
+                list.add(
+                    TargetDacOption.UsbTarget(
+                        entry = usb,
+                        isActiveSession = usb.device.deviceName == activeKey
+                    )
                 )
-            } else {
-                DefaultBands.flatBands(targetCount)[idx]
+            }
+
+        state.detectedBtDevices.forEach { bt ->
+            list.add(
+                TargetDacOption.BtTarget(
+                    entry = bt,
+                    isActiveSession = bt.descriptor.deviceKey == activeKey
+                )
+            )
+        }
+
+        val session = state.activeSession
+        if (session != null && list.none { it.deviceKey == session.deviceKey }) {
+            list.add(
+                TargetDacOption.ActiveSessionOnly(
+                    deviceKey = session.deviceKey,
+                    title = session.profile.model,
+                    subtitle = "${session.profile.protocol.displayName} · Connected"
+                )
+            )
+        }
+        return list
+    }
+
+    fun applyPreset(preset: EqPreset, forceActiveSessionOnly: Boolean = false) {
+        val active = _uiState.value.activeSession
+        if (forceActiveSessionOnly) {
+            if (active == null) {
+                showToast("Connect a DAC to apply \"${preset.name}\"")
+                return
+            }
+            continueApplyToActiveSession(preset)
+            return
+        }
+
+        val targets = availableTargetDacs()
+        when {
+            targets.isEmpty() -> {
+                showToast("No DAC connected or detected")
+            }
+            targets.size > 1 -> {
+                _uiState.update {
+                    it.copy(
+                        pendingTargetDacSelection = PendingTargetDacSelection(
+                            preset = preset,
+                            options = targets
+                        )
+                    )
+                }
+            }
+            else -> {
+                confirmTargetDacOption(targets.first(), preset)
             }
         }
-        val clampedPreamp = preset.preampDb.coerceIn(session.capabilities.globalGainRange)
+    }
+
+    fun confirmTargetDacSelection(option: TargetDacOption) {
+        val pending = _uiState.value.pendingTargetDacSelection ?: return
+        _uiState.update { it.copy(pendingTargetDacSelection = null) }
+        confirmTargetDacOption(option, pending.preset)
+    }
+
+    fun dismissTargetDacSelection() {
+        _uiState.update { it.copy(pendingTargetDacSelection = null) }
+    }
+
+    private fun confirmTargetDacOption(option: TargetDacOption, preset: EqPreset) {
+        val currentKey = _uiState.value.activeSession?.deviceKey
+        if (currentKey != null && option.deviceKey == currentKey) {
+            continueApplyToActiveSession(preset)
+            return
+        }
+
+        viewModelScope.launch {
+            val connected = when (option) {
+                is TargetDacOption.UsbTarget -> openUsbConnection(option.entry, navigateToDashboard = false)
+                is TargetDacOption.BtTarget -> openBtConnection(option.entry, navigateToDashboard = false)
+                is TargetDacOption.ActiveSessionOnly -> _uiState.value.activeSession != null
+            }
+            if (connected) {
+                continueApplyToActiveSession(preset)
+            }
+        }
+    }
+
+    private fun continueApplyToActiveSession(preset: EqPreset) {
+        val session = _uiState.value.activeSession ?: return
+        val presetsForUac = session.capabilities.activePresetsForUac(session.state.uacMode)
+        val writableSlots = presetsForUac.filter { it.id in session.capabilities.writablePresetIds }
+        when {
+            writableSlots.size > 1 -> {
+                _uiState.update {
+                    it.copy(
+                        pendingSlotSelection = PendingSlotSelection(
+                            preset = preset,
+                            dacName = session.profile.model,
+                            slots = writableSlots,
+                            customNames = session.state.customPresetNames,
+                            currentPresetId = session.state.activePresetId
+                        )
+                    )
+                }
+            }
+            writableSlots.size == 1 -> {
+                proceedApplyPresetWithSlot(preset, targetSlotId = writableSlots.first().id)
+            }
+            else -> {
+                proceedApplyPresetWithSlot(preset, targetSlotId = null)
+            }
+        }
+    }
+
+    fun confirmSlotSelection(slotId: Int) {
+        val pending = _uiState.value.pendingSlotSelection ?: return
+        _uiState.update { it.copy(pendingSlotSelection = null) }
+        proceedApplyPresetWithSlot(pending.preset, targetSlotId = slotId)
+    }
+
+    fun dismissSlotSelection() {
+        _uiState.update { it.copy(pendingSlotSelection = null) }
+    }
+
+    private fun proceedApplyPresetWithSlot(preset: EqPreset, targetSlotId: Int?) {
+        val session = _uiState.value.activeSession ?: return
+        val targetCount = session.state.bands.size.coerceAtLeast(session.capabilities.maxBands)
+        when (val resolution = PresetBandHelper.resolveBandsForTarget(preset.bands, targetCount)) {
+            is PresetBandHelper.BandResolution.Ready -> {
+                commitAppliedBands(preset.name, resolution.bands, preset.preampDb, targetSlotId)
+            }
+            is PresetBandHelper.BandResolution.NeedsSelection -> {
+                _uiState.update {
+                    it.copy(
+                        pendingBandSelection = PendingBandSelection.ApplyPresetToDac(
+                            preset = preset,
+                            targetSlotId = targetSlotId,
+                            targetDacBands = targetCount,
+                            dacName = session.profile.model,
+                            candidateBands = resolution.candidateBands,
+                            maxSelectable = resolution.maxSelectable
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private fun commitAppliedBands(
+        presetName: String,
+        resolvedBands: List<EqBand>,
+        preampDb: Double,
+        targetSlotId: Int?
+    ) {
+        val session = _uiState.value.activeSession ?: return
+        val tx = activeTransport ?: return
+        val driver = activeDriver ?: return
+
+        val adapted = resolvedBands.mapIndexed { idx, src ->
+            src.copy(
+                index = idx,
+                gainDb = src.gainDb.coerceIn(session.capabilities.minGainDb, session.capabilities.maxGainDb),
+                q = src.q.coerceIn(session.capabilities.minQ, session.capabilities.maxQ),
+                filterType = if (src.filterType in session.capabilities.supportedFilters) src.filterType else FilterType.PEAK
+            )
+        }
+        val clampedPreamp = preampDb.coerceIn(session.capabilities.globalGainRange)
+        val slotIdToUse = targetSlotId ?: session.state.activePresetId
+        val slotLabel = session.capabilities.activePresetsForUac(session.state.uacMode)
+            .firstOrNull { it.id == slotIdToUse }
+            ?.let { session.state.customPresetNames[it.id]?.takeIf { n -> n.isNotBlank() } ?: it.label }
+
+        bandWriteDebounceJob?.cancel()
+        bandWriteDebounceJob = null
+
+        val nextEqEnabled = if (
+            targetSlotId != null &&
+            session.capabilities.bypassPresetId != targetSlotId
+        ) {
+            true
+        } else {
+            session.state.eqEnabled
+        }
+
         _uiState.update {
             it.copy(
+                pendingBandSelection = null,
+                selectedBandIndex = 0,
                 activeSession = session.copy(
-                    state = session.state.copy(bands = adapted, globalGainDb = clampedPreamp),
+                    state = session.state.copy(
+                        activePresetId = slotIdToUse,
+                        eqEnabled = nextEqEnabled,
+                        bands = adapted,
+                        globalGainDb = clampedPreamp
+                    ),
+                    isBusy = true,
                     hasUnsavedFlashEdits = true
                 )
             )
         }
-        applyAllEqNow()
+
+        viewModelScope.launch {
+            val savedCleanly = ioMutex.withLock {
+                lastUserWriteAtMs = System.currentTimeMillis()
+                // 1. Set target custom slot on DAC first so writes never touch factory/wrong slots
+                if (targetSlotId != null) {
+                    driver.selectPreset(tx, session.profile, targetSlotId)
+                    delay(80)
+                    if (!session.state.eqEnabled && session.capabilities.bypassPresetId != targetSlotId) {
+                        lastNonBypassPresetId = targetSlotId
+                        if (!session.capabilities.eqToggleUsesBypass) {
+                            driver.setEqEnabled(tx, session.profile, true)
+                            delay(40)
+                        }
+                    }
+                }
+                // 2. Write bands + global preamp to DAC
+                val wroteAll = driver.writeAllEqBands(
+                    transport = tx,
+                    profile = session.profile,
+                    bands = adapted,
+                    globalGainDb = clampedPreamp,
+                    presetId = slotIdToUse
+                )
+                if (!wroteAll) return@withLock false
+                // 3. Persist to flash on DAC
+                val savedFlash = if (session.capabilities.supportsFlashSave) {
+                    driver.saveToFlash(tx, session.profile, slotIdToUse)
+                } else {
+                    true
+                }
+                // 4. Refresh live DSP RAM
+                if (session.capabilities.supportsRamRefresh) {
+                    driver.refreshEqRam(tx, session.profile)
+                }
+                savedFlash
+            }
+
+            _uiState.update { state ->
+                val cur = state.activeSession ?: return@update state
+                val toast = if (!savedCleanly) {
+                    "Failed to apply \"$presetName\" to DAC"
+                } else if (slotLabel != null && session.capabilities.supportsFlashSave) {
+                    "Applied & saved \"$presetName\" to $slotLabel"
+                } else if (slotLabel != null) {
+                    "Applied \"$presetName\" to $slotLabel"
+                } else if (session.capabilities.supportsFlashSave) {
+                    "Applied & saved \"$presetName\""
+                } else {
+                    "Applied \"$presetName\""
+                }
+                state.copy(
+                    activeSession = cur.copy(
+                        isBusy = false,
+                        hasUnsavedFlashEdits = if (savedCleanly) false else cur.hasUnsavedFlashEdits
+                    ),
+                    toastMessage = toast
+                )
+            }
+        }
+    }
+
+    fun saveOrUpdateUserPreset(
+        existingId: String?,
+        name: String,
+        preampDb: Double,
+        bands: List<EqBand>
+    ) {
+        val cleanName = name.trim().ifEmpty { "Custom EQ" }
+        val normalized = PresetBandHelper.padToCount(
+            bands.take(PresetBandHelper.STANDARD_PRESET_BANDS),
+            PresetBandHelper.STANDARD_PRESET_BANDS
+        )
+        val presetId = existingId?.takeIf { it.isNotBlank() } ?: "user_${System.currentTimeMillis()}"
+        val saved = EqPreset(
+            id = presetId,
+            name = cleanName,
+            preampDb = preampDb.coerceIn(-12.0, 12.0),
+            bands = normalized,
+            builtIn = false
+        )
+        val updatedList = presetStore.saveUserPreset(saved)
+        _uiState.update {
+            it.copy(
+                presets = updatedList,
+                pendingBandSelection = null,
+                toastMessage = "Saved preset \"$cleanName\""
+            )
+        }
     }
 
     fun saveCurrentAsUserPreset(name: String) {
         val session = _uiState.value.activeSession ?: return
         val cleanName = name.trim().ifEmpty { "Custom EQ" }
-        val newPreset = EqPreset(
-            id = "user_${System.currentTimeMillis()}",
-            name = cleanName,
-            preampDb = session.state.globalGainDb,
-            bands = session.state.bands,
-            builtIn = false
-        )
-        val updatedList = presetStore.saveUserPreset(newPreset)
-        _uiState.update { it.copy(presets = updatedList, toastMessage = "Saved preset \"$cleanName\"") }
+        when (val res = PresetBandHelper.resolveStandardTenBands(session.state.bands)) {
+            is PresetBandHelper.BandResolution.Ready -> {
+                saveOrUpdateUserPreset(
+                    existingId = null,
+                    name = cleanName,
+                    preampDb = session.state.globalGainDb,
+                    bands = res.bands
+                )
+            }
+            is PresetBandHelper.BandResolution.NeedsSelection -> {
+                _uiState.update {
+                    it.copy(
+                        pendingBandSelection = PendingBandSelection.SaveDacToPreset(
+                            name = cleanName,
+                            preampDb = session.state.globalGainDb,
+                            sourceBands = session.state.bands,
+                            candidateBands = res.candidateBands,
+                            maxSelectable = res.maxSelectable
+                        )
+                    )
+                }
+            }
+        }
     }
 
     fun deleteUserPreset(id: String) {
         val updatedList = presetStore.deleteUserPreset(id)
-        _uiState.update { it.copy(presets = updatedList) }
+        _uiState.update { it.copy(presets = updatedList, toastMessage = "Preset deleted") }
     }
 
-    fun importAutoEqText(text: String) {
-        val session = _uiState.value.activeSession ?: return
-        val parsed = PeqTextParser.parse(text, maxBands = session.capabilities.maxBands)
+    fun importAutoEqToPresets(suggestedName: String, text: String) {
+        val parsed = PeqTextParser.parse(text, maxBands = 64)
         if (parsed.bands.isEmpty()) {
             showToast("No valid PEQ filters found in file")
             return
         }
-        val tempPreset = EqPreset(id = "import", name = "Imported", preampDb = parsed.preampDb, bands = parsed.bands)
-        applyPreset(tempPreset)
-        showToast("Imported ${parsed.bands.size} bands")
+        val cleanName = suggestedName.trim().ifEmpty { "Imported EQ" }
+        when (val res = PresetBandHelper.resolveStandardTenBands(parsed.bands)) {
+            is PresetBandHelper.BandResolution.Ready -> {
+                saveOrUpdateUserPreset(
+                    existingId = null,
+                    name = cleanName,
+                    preampDb = parsed.preampDb,
+                    bands = res.bands
+                )
+                val activeCount = PresetBandHelper.activeBands(res.bands).size
+                showToast("Imported \"$cleanName\" ($activeCount active / 10 bands)")
+            }
+            is PresetBandHelper.BandResolution.NeedsSelection -> {
+                _uiState.update {
+                    it.copy(
+                        pendingBandSelection = PendingBandSelection.SaveImportedPreset(
+                            name = cleanName,
+                            preampDb = parsed.preampDb,
+                            sourceBands = parsed.bands,
+                            candidateBands = res.candidateBands,
+                            maxSelectable = res.maxSelectable
+                        )
+                    )
+                }
+            }
+        }
     }
 
-    fun exportCurrentAutoEqText(): String {
-        val session = _uiState.value.activeSession ?: return ""
-        return PeqTextParser.exportAutoEq(session.state.bands, session.state.globalGainDb)
+    fun confirmPendingBandSelection(selectedCandidateIndices: List<Int>, customPresetName: String? = null) {
+        val pending = _uiState.value.pendingBandSelection ?: return
+        when (pending) {
+            is PendingBandSelection.ApplyPresetToDac -> {
+                val res = PresetBandHelper.resolveBandsForTarget(
+                    presetBands = pending.preset.bands,
+                    targetMaxBands = pending.targetDacBands,
+                    selectedCandidateIndices = selectedCandidateIndices
+                )
+                if (res is PresetBandHelper.BandResolution.Ready) {
+                    commitAppliedBands(pending.preset.name, res.bands, pending.preset.preampDb, pending.targetSlotId)
+                }
+            }
+            is PendingBandSelection.SaveImportedPreset -> {
+                val res = PresetBandHelper.resolveStandardTenBands(
+                    sourceBands = pending.sourceBands,
+                    selectedCandidateIndices = selectedCandidateIndices
+                )
+                if (res is PresetBandHelper.BandResolution.Ready) {
+                    val finalName = customPresetName?.trim()?.ifEmpty { pending.name } ?: pending.name
+                    saveOrUpdateUserPreset(
+                        existingId = null,
+                        name = finalName,
+                        preampDb = pending.preampDb,
+                        bands = res.bands
+                    )
+                }
+            }
+            is PendingBandSelection.SaveDacToPreset -> {
+                val res = PresetBandHelper.resolveStandardTenBands(
+                    sourceBands = pending.sourceBands,
+                    selectedCandidateIndices = selectedCandidateIndices
+                )
+                if (res is PresetBandHelper.BandResolution.Ready) {
+                    val finalName = customPresetName?.trim()?.ifEmpty { pending.name } ?: pending.name
+                    saveOrUpdateUserPreset(
+                        existingId = null,
+                        name = finalName,
+                        preampDb = pending.preampDb,
+                        bands = res.bands
+                    )
+                }
+            }
+        }
     }
+
+    fun dismissPendingBandSelection() {
+        _uiState.update { it.copy(pendingBandSelection = null) }
+    }
+
+    fun exportPresetAutoEqText(preset: EqPreset): String =
+        PeqTextParser.exportAutoEq(preset.bands, preset.preampDb)
 
     // --- Hardware Controls ---
 

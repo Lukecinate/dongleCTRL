@@ -51,6 +51,7 @@ import com.suprcharg3d.dongleCTRL.bt.DetectedBluetoothDac
 import com.suprcharg3d.dongleCTRL.ui.ActiveDacSession
 import com.suprcharg3d.dongleCTRL.ui.components.DacDongleIllustration
 import com.suprcharg3d.dongleCTRL.ui.components.DacProductImage
+import com.suprcharg3d.dongleCTRL.ui.components.MainTabHeader
 import com.suprcharg3d.dongleCTRL.usb.DetectedUsbDac
 import com.suprcharg3d.dongleCTRL.protocol.DacProfile
 import com.suprcharg3d.dongleCTRL.protocol.ProtocolFamily
@@ -81,45 +82,38 @@ fun DevicesScreen(
             .fillMaxSize()
             .padding(horizontal = 16.dp)
     ) {
-        // Minimalist header inspired by "MY DEVICES [count]" reference
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 18.dp, bottom = 14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "MY DEVICES",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.ExtraBold
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(10.dp)
-            ) {
-                Text(
-                    text = totalCount.toString(),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
-                )
+        MainTabHeader(
+            title = "DEVICES",
+            leadingBadge = {
+                Spacer(modifier = Modifier.width(10.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text(
+                        text = totalCount.toString(),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
+                    )
+                }
+            },
+            actions = {
+                IconButton(onClick = onScanBluetooth) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.BluetoothSearching,
+                        contentDescription = "Scan Bluetooth DACs",
+                        tint = if (isBtScanning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                    )
+                }
+                IconButton(onClick = onRefreshScan) {
+                    Icon(
+                        imageVector = Icons.Rounded.Refresh,
+                        contentDescription = "Scan USB DACs"
+                    )
+                }
             }
-            Spacer(modifier = Modifier.weight(1f))
-            IconButton(onClick = onScanBluetooth) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.BluetoothSearching,
-                    contentDescription = "Scan Bluetooth DACs",
-                    tint = if (isBtScanning) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                )
-            }
-            IconButton(onClick = onRefreshScan) {
-                Icon(
-                    imageVector = Icons.Rounded.Refresh,
-                    contentDescription = "Scan USB DACs"
-                )
-            }
-        }
+        )
 
         if (!hasBtPermission) {
             Surface(
