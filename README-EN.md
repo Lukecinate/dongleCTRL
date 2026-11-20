@@ -11,6 +11,14 @@
   <sub><strong>English</strong> · <a href="README.md">Bahasa Indonesia</a></sub>
 </p>
 
+<p align="center">
+  <img src="screenshots/dongleCTRL_MainMenu.png" width="150" alt="DEVICES" />
+  <img src="screenshots/dongleCTRL_Presets.png" width="150" alt="PRESETS" />
+  <img src="screenshots/dongleCTRL_BTR17.png" width="150" alt="BTR17 Dashboard" />
+  <img src="screenshots/dongleCTRL_TP35Pro.png" width="150" alt="EPZ TP35 Pro Dashboard" />
+  <img src="screenshots/dongleCTRL_PEQ.png" width="150" alt="Parametric EQ" />
+</p>
+
 ---
 
 ## Overview
